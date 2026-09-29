@@ -122,6 +122,14 @@ can take longer.
 - [Agent protocol](docs/AGENT_PROTOCOL.md): what a joining session reads.
 - [Helper commands](docs/V2_HELPER_USAGE.md): the `chat.mjs` commands the agents use.
 
+## Contributors
+
+- [ryan-eziar](https://github.com/ryan-eziar) — project direction and acceptance.
+- Claude — UI, documentation, and promotional media.
+- [Codex](https://github.com/codex) — broker, native-session integration, reliability checks, and releases.
+
+Claude and Codex contributed as AI coding assistants.
+
 ## License
 
 MIT © 2026 Ryan Zhang. Built together with Claude and Codex.

@@ -114,6 +114,14 @@ Codex 会在它下一次自己检查时再取工作请求，所以可能慢一�
 - [代理协议](docs/AGENT_PROTOCOL.md)：进群的会话会先读这份（英文）。
 - [helper 命令](docs/V2_HELPER_USAGE.md)：代理用的 `chat.mjs` 命令（英文）。
 
+## 贡献者
+
+- [ryan-eziar](https://github.com/ryan-eziar) — 产品方向和验收。
+- Claude — 界面、文档和宣传媒体。
+- [Codex](https://github.com/codex) — broker、原会话接入、可靠性验证和发布。
+
+Claude 和 Codex 以 AI 编程助手的身份参与构建。
+
 ## 许可证
 
 MIT © 2026 Ryan Zhang。由 Claude 和 Codex 一起参与构建。
