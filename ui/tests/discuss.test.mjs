@@ -142,3 +142,26 @@ test('a plan without a usable first line gets a plain goal', () => {
   assert.equal(c.planObjective('---\n\n**Goal:** add the export language\nmore', 'codex'), 'Goal: add the export language');
   assert.equal(c.planObjective('```\n```\n', 'claude'), '按 Claude 的方案执行');
 });
+
+test('opening the discuss popover focuses Start discussion, or Close when it cannot start', () => {
+  const focused = [];
+  const button = (name) => ({ focus: () => focused.push(name) });
+  const run = (startEnabled, info = { mode: 'ready', cand: { baseMessageId: 'msg-7' } }) => {
+    focused.length = 0;
+    const pop = { querySelector: (sel) => (sel === '.dp-foot .primary:not(:disabled)' ? (startEnabled ? button('start') : null) : sel === '.dp-close' ? button('close') : null) };
+    const c = {
+      st: { composer: { discussOpen: false, discussTarget: null } },
+      discussionInfo: () => info, control: () => ({}), renderComposer() {},
+      $: (id) => (id === 'discuss-pop' ? pop : button(id)),
+    };
+    vm.createContext(c);
+    vm.runInContext(fn('setDiscussOpen'), c);
+    c.setDiscussOpen(true);
+    const opened = [...focused];
+    c.setDiscussOpen(false, true);
+    return { opened, closed: focused.slice(opened.length), target: c.st.composer.discussTarget };
+  };
+  assert.deepEqual(run(true).opened, ['start'], 'ready: Enter starts the discussion');
+  assert.deepEqual(run(false, { mode: 'blocked', cand: { baseMessageId: 'msg-7' } }).opened, ['close'], 'nothing to start: Close, so Enter or Esc just closes');
+  assert.deepEqual(run(true).closed, ['discuss-toggle'], 'closing with the keyboard returns focus to the button');
+});

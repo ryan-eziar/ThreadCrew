@@ -2685,7 +2685,7 @@
     const e = info.cand ? discussedEntry(info.cand.anchorItemId, info.cand.baseMessageId) : info.ex ? discussedEntry(null, info.ex.baseMessageId) : null;
     if (!v || !e) return info.cand ? h('p', { class: 'dp-about' }, t('讨论你最新发的那条消息。')) : null;
     const go = () => { setDiscussOpen(false); if (v.entries.has(e.id)) jumpToEntry(v, e.id); else if (info.cand) jumpTo(v, info.cand.anchorCursor, e.id); };
-    return h('p', { class: 'dp-about' }, t('讨论的消息：'), link(`“${snippet(e.message.content.previewText, 70)}”`, go, { class: 'link dp-quote', title: t('跳到原消息') }));
+    return h('p', { class: 'dp-about' }, t('讨论的消息：'), link(`“${snippet(e.message.content.previewText, 70)}”`, go, { class: 'link dp-quote', title: t('跳到原消息'), 'data-key': 'quote' }));
   }
 
   function discussLabel(info, op) {
@@ -2715,7 +2715,8 @@
     st.composer.discussTarget = open ? (info.cand ? info.cand.baseMessageId : info.ex ? info.ex.baseMessageId : null) : null;
     renderComposer();
     if (open) {
-      const first = $('discuss-pop').querySelector('.dp-foot .primary:not(:disabled), .dp-close');
+      const pop = $('discuss-pop');
+      const first = pop.querySelector('.dp-foot .primary:not(:disabled)') || pop.querySelector('.dp-close');
       if (first) first.focus();
     } else if (focusBack) $('discuss-toggle').focus();
   }
@@ -2728,7 +2729,7 @@
     const title = info.mode === 'active' ? t('讨论中 · 第 {0}/{1} 轮', info.ex.currentRound, info.ex.maxRounds)
       : info.cand && info.cand.previousExchangeId && info.mode !== 'kickoff' ? t('再讨论') : t('让他们讨论');
     const parts = [h('div', { class: 'dp-head' }, h('span', { class: 'dp-title' }, title),
-      h('button', { type: 'button', class: 'icon-btn dp-close', 'aria-label': t('关闭'), title: t('关闭'), onclick: () => setDiscussOpen(false, true) }, icon('x', 14)))];
+      h('button', { type: 'button', class: 'icon-btn dp-close', 'data-key': 'close', 'aria-label': t('关闭'), title: t('关闭'), onclick: () => setDiscussOpen(false, true) }, icon('x', 14)))];
     if (info.mode === 'none') {
       parts.push(h('p', { class: 'dp-text' }, t('先发一条消息。两位都回复后，可以让他们看到对方的回复再回应，最多三轮。')));
     } else if (info.mode === 'kickoff') {
@@ -2744,7 +2745,7 @@
         h('p', { class: 'dp-status' }, h('span', { class: 'pulse', 'aria-hidden': 'true' }), waiting, done.length === 1 ? t(' · {0} 已表示无需继续', NAMES[done[0]]) : null),
         h('p', { class: 'dp-text' }, ex.finishPolicy === 'both_same_round' ? t('轮数用完，或者两位在同一轮都表示没有要补充的，讨论就结束。') : t('轮数用完，或者任何一方表示没有要补充的，讨论就结束。')),
         h('div', { class: 'dp-foot' }, h('span', { class: 'hint' }, t('想现在结束：')),
-          btn(t('停止…'), stopDiscussion, { danger: true, disabled: !writable() || !c.room.actions.stop.enabled || st.ops.has(rk('stop')) })));
+          btn(t('停止…'), stopDiscussion, { danger: true, 'data-key': 'stop', disabled: !writable() || !c.room.actions.stop.enabled || st.ops.has(rk('stop')) })));
     } else {
       const again = Boolean(info.cand.previousExchangeId);
       const sending = Boolean(op && op.state === 'sending');
@@ -2754,14 +2755,19 @@
       const moved = st.composer.discussTarget !== info.cand.baseMessageId;
       parts.push(discussedLine(info),
         moved ? h('p', { class: 'dp-reason' }, t('你刚发了一条新消息，要讨论的已换成这条最新的。'), ' ',
-          link(t('就讨论这条'), () => { st.composer.discussTarget = info.cand.baseMessageId; renderComposer(); })) : null,
+          link(t('就讨论这条'), () => { st.composer.discussTarget = info.cand.baseMessageId; renderComposer(); }, { 'data-key': 'retarget' })) : null,
         h('p', { class: 'dp-text' }, again ? t('每位先看对方最新的回复，再回应。') : t('每位先看对方的回复，再回应。')),
         h('div', { class: 'dp-rounds', role: 'group', 'aria-label': t('讨论轮数') }, h('span', { class: 'dp-label' }, t('轮数')),
-          [1, 2, 3].map((n) => h('button', { type: 'button', class: 'dp-round', 'aria-pressed': String(n === st.rounds), disabled: sending, onclick: () => { st.rounds = n; renderComposer(); } }, String(n)))),
+          [1, 2, 3].map((n) => h('button', { type: 'button', class: 'dp-round', 'data-key': `round-${n}`, 'aria-pressed': String(n === st.rounds), disabled: sending, onclick: () => { st.rounds = n; renderComposer(); } }, String(n)))),
         h('div', { class: 'dp-foot' }, (op && actionState(rk('discuss'))) || h('span', { class: 'hint' }, t('最多再触发 {0} 次代理回复', st.rounds * 2)),
-          h('button', { type: 'button', class: 'primary', disabled: !writable() || Boolean(op) || moved, onclick: () => startDiscussion(info.cand) }, sending ? t('正在开始…') : t('开始讨论'))));
+          h('button', { type: 'button', class: 'primary', 'data-key': 'start', disabled: !writable() || Boolean(op) || moved, onclick: () => startDiscussion(info.cand) }, sending ? t('正在开始…') : t('开始讨论'))));
     }
+    // The popover is rebuilt on every render (the room keeps updating): keep the keyboard focus on the
+    // same control, or a keyboard user loses their place while the room updates.
+    const focusKey = pop.contains(document.activeElement) && document.activeElement.dataset ? document.activeElement.dataset.key : null;
     fill(pop, ...parts.filter(Boolean));
+    const again = focusKey && pop.querySelector(`[data-key="${focusKey}"]`);
+    if (again && !again.disabled) again.focus();
     placeDiscussPop();
   }
 

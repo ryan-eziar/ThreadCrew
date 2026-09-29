@@ -1,6 +1,6 @@
 {
   "product": "ThreadCrew",
-  "generatedAt": "2026-09-29T02:08:30.361Z",
+  "generatedAt": "2026-09-29T02:52:34.663Z",
   "files": [
     {
       "path": "chat.mjs",
@@ -49,8 +49,8 @@
     },
     {
       "path": "scripts/export-public.mjs",
-      "bytes": 7199,
-      "sha256": "1e93ac76a6669237b8c997a0de7add19c760702b5377eb06693950e0d4469e97"
+      "bytes": 7392,
+      "sha256": "871e33e9c3b65671d6c4e9a216b3adeced552722a73dfbf2aa4ff8688d18dcdc"
     },
     {
       "path": "docs/AGENT_PROTOCOL.md",
@@ -76,6 +76,26 @@
       "path": "docs/media/threadcrew-poster.png",
       "bytes": 367945,
       "sha256": "9b02df234cbfb9a4b476dce1fddceb8d5c2174814660133fff89a625d4c628f0"
+    },
+    {
+      "path": "docs/media/screenshot-room.png",
+      "bytes": 487843,
+      "sha256": "b200e334ca4a7aae0b12aa28c488e557ee85df08ce22e307b885055f8622b805"
+    },
+    {
+      "path": "docs/media/screenshot-discuss.png",
+      "bytes": 523658,
+      "sha256": "4321339b5ebde18b70f8b46d1506a124ee3c35aa0df6af8beb23709cad8f7b25"
+    },
+    {
+      "path": "docs/media/screenshot-work.png",
+      "bytes": 530754,
+      "sha256": "221708e820ff1f43690b3de3823c5c71f834c69ea3177b32cb317bb9be6cbe22"
+    },
+    {
+      "path": "docs/media/screenshot-reconnect.png",
+      "bytes": 470113,
+      "sha256": "74a41a55c28497c2a3e4757be49c77c3d7de3240727204b583394f0b3ceb98b5"
     },
     {
       "path": "src/broker-server.mjs",
@@ -174,8 +194,8 @@
     },
     {
       "path": "ui/app-v2.js",
-      "bytes": 231825,
-      "sha256": "c2fd540a01058e9a3b0aa532045f6195c5365451d0c14b8a143c6d22ccf6dc75"
+      "bytes": 232457,
+      "sha256": "e5ae16631b8dcb3a7b8f8a759386dd415b832c5df3a854910c286783f35e1a31"
     },
     {
       "path": "ui/source-v2.js",
@@ -244,8 +264,8 @@
     },
     {
       "path": "tests/public-export.test.mjs",
-      "bytes": 758,
-      "sha256": "2be8f269d03578e694cbd5fb64245abafc314d79580481f1d12a6fea4510fc70"
+      "bytes": 3280,
+      "sha256": "c1554a00260a3a3ff36d256cc46c0642ba9e7ab1d650fbdae9efbc72b7946057"
     },
     {
       "path": "tests/reconnect.test.mjs",
@@ -304,8 +324,8 @@
     },
     {
       "path": "ui/tests/discuss.test.mjs",
-      "bytes": 8607,
-      "sha256": "24ec6278c64d4b6bbd88369ab6326daacdc81fe95cfde978110bd3b243489bb4"
+      "bytes": 9958,
+      "sha256": "73b326208fe55f1f51b4c2960c7d6e91d5012226ec382bc745e27cfbc56510e7"
     },
     {
       "path": "ui/tests/exit.test.mjs",
@@ -339,23 +359,23 @@
     },
     {
       "path": "README.md",
-      "bytes": 6531,
-      "sha256": "d7282161d422138767653dfe0d40765f770fd53dce7cff6e5aaf7ec907bdb932"
+      "bytes": 7020,
+      "sha256": "0b8c2137531e88f7a1a3cdb200688e143e2c25a89014f0ea17259ddc3c0aa4ed"
     },
     {
       "path": "docs/public/README.md",
-      "bytes": 6531,
-      "sha256": "d7282161d422138767653dfe0d40765f770fd53dce7cff6e5aaf7ec907bdb932"
+      "bytes": 7020,
+      "sha256": "0b8c2137531e88f7a1a3cdb200688e143e2c25a89014f0ea17259ddc3c0aa4ed"
     },
     {
       "path": "README.zh-CN.md",
-      "bytes": 6348,
-      "sha256": "a367753e8e6ae224350f83d204a6646b96123c6ca8796b4a97bfb262ec40278d"
+      "bytes": 6814,
+      "sha256": "3a7443e4fb9f6930b6202311b74a2fa6c5fed773fc438b6fccdf21f231dbdff8"
     },
     {
       "path": "docs/public/README.zh-CN.md",
-      "bytes": 6348,
-      "sha256": "a367753e8e6ae224350f83d204a6646b96123c6ca8796b4a97bfb262ec40278d"
+      "bytes": 6814,
+      "sha256": "3a7443e4fb9f6930b6202311b74a2fa6c5fed773fc438b6fccdf21f231dbdff8"
     },
     {
       "path": "docs/RELEASE_NOTES.md",
@@ -402,5 +422,5 @@
     "textFiles": 77,
     "findings": []
   },
-  "limitations": "Pattern scan only; the icon and separately reviewed poster are binary assets, not text-scanned. No runtime or original Git history included."
+  "limitations": "Pattern scan only; the icon and separately reviewed PNG assets are binary assets, not text-scanned. No runtime or original Git history included."
 }
