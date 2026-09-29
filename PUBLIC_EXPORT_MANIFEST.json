@@ -1,6 +1,6 @@
 {
   "product": "ThreadCrew",
-  "generatedAt": "2026-09-29T07:10:45.580Z",
+  "generatedAt": "2026-09-29T14:22:55.621Z",
   "files": [
     {
       "path": "chat.mjs",
@@ -10,7 +10,7 @@
     {
       "path": "package.json",
       "bytes": 499,
-      "sha256": "68d6844e5474709d6996bbe7ea1705ed5181ba8cc38ca318ca63a6765cc38fa8"
+      "sha256": "ee85026a5bacf955593cd3a667eaa965bec6617178499e59390b24d69f28fc17"
     },
     {
       "path": "LICENSE",
@@ -165,7 +165,7 @@
     {
       "path": "src/threadcrew-features.mjs",
       "bytes": 18051,
-      "sha256": "202aea659de020a52cccc4e181f854299fac75a945c7a0dd5dac2aafd9f9b873"
+      "sha256": "32f867ad664ebca4febcf6a92b6a1c57b2e91a135b2849e956abd86e773f3aa9"
     },
     {
       "path": "src/update-install.mjs",
@@ -184,8 +184,8 @@
     },
     {
       "path": "src/v2-broker.mjs",
-      "bytes": 130544,
-      "sha256": "976d66153613ff41cb917da44d08a4b9e11c4a4d0aa9e8c83d2d40b949e1e045"
+      "bytes": 130967,
+      "sha256": "8b736b0cf14dad8371873e67f0cf60f68fc5b1605936e401345b2a74822d6e1d"
     },
     {
       "path": "src/v2-cli.mjs",
@@ -234,8 +234,8 @@
     },
     {
       "path": "ui/app-v2.js",
-      "bytes": 266039,
-      "sha256": "e7a29a33d7378fd131883df6f5ad540d778089a0d95685bed66047458b3a1b93"
+      "bytes": 274974,
+      "sha256": "85a4f1aa61df18323351fa1c4cd186690e00d557e721fdd160b909570076a619"
     },
     {
       "path": "ui/source-v2.js",
@@ -244,8 +244,8 @@
     },
     {
       "path": "ui/style.css",
-      "bytes": 71024,
-      "sha256": "107cc4ac64cb324a40e04a845cbf9189f4f229d1b5f5aa35fbfb15ad517a5982"
+      "bytes": 71770,
+      "sha256": "06ce5431f173ac427d1b62549f1d284804fafd290394ce336eb68ab3ed3113e4"
     },
     {
       "path": "ui/markdown.js",
@@ -254,8 +254,8 @@
     },
     {
       "path": "ui/i18n.js",
-      "bytes": 59539,
-      "sha256": "52686ef0e08276f357d7c325ad0bf2d29522da3a1d15c9d8f197db1590f0732f"
+      "bytes": 59667,
+      "sha256": "467dfaf1f7f6c9c3498f4d0d3d90cbb31d373338d5798db0a1878bce5965f858"
     },
     {
       "path": "tests/broker-adversarial.test.mjs",
@@ -325,7 +325,7 @@
     {
       "path": "tests/threadcrew-features.test.mjs",
       "bytes": 11358,
-      "sha256": "00fdc7f1b3889687a3694586a7a5bac9f6ced6d35479fa46856f0f22cc7e9d4a"
+      "sha256": "8677b13a9166891fe8b66b963a1662282d393b02a6aabc2f5f27f54c83331130"
     },
     {
       "path": "tests/updates.test.mjs",
@@ -389,8 +389,8 @@
     },
     {
       "path": "tests/v2-work.test.mjs",
-      "bytes": 38652,
-      "sha256": "47f9c807c6bcd3965ba3f8cc5dfe845ec82644af2445ce5d80ad0e3f0cd93235"
+      "bytes": 42186,
+      "sha256": "c34d9bac7372afe1f78748b66d6bb946c9cc8213c26bdf40358393937e050f6e"
     },
     {
       "path": "ui/tests/discuss.test.mjs",
@@ -443,6 +443,11 @@
       "sha256": "aa270c13d3c05ce0f0372ee77a5b5ba2736cddcd5c9a42a872a4694c7a7d8fc1"
     },
     {
+      "path": "ui/tests/unread.test.mjs",
+      "bytes": 11961,
+      "sha256": "5006af40a6ee6e260560f85160d6ce4b40fe6d9d36f086208c50a7fa6fcdd8d8"
+    },
+    {
       "path": "ui/tests/update.test.mjs",
       "bytes": 9558,
       "sha256": "d5461fa9dbf16f3662919f12213bb8acdf5202f28c0fd4d10f1a7b5b76758816"
@@ -450,52 +455,52 @@
     {
       "path": "README.md",
       "bytes": 10608,
-      "sha256": "92998b57f61e46bb9206e27724faf0f9df6bbdf21c11e6dffa9bdcfd5ae2bed7"
+      "sha256": "8864ce2aacfaf700e9f5fe99a680521237c01a09f8dc0735a8e2a7e40f376a7f"
     },
     {
       "path": "docs/public/README.md",
       "bytes": 10608,
-      "sha256": "92998b57f61e46bb9206e27724faf0f9df6bbdf21c11e6dffa9bdcfd5ae2bed7"
+      "sha256": "8864ce2aacfaf700e9f5fe99a680521237c01a09f8dc0735a8e2a7e40f376a7f"
     },
     {
       "path": "README.zh-CN.md",
       "bytes": 10250,
-      "sha256": "101925960515116313b4744ba37d2e5c0e052ee0c11cbfd2111ab61ff2091ea8"
+      "sha256": "45f468a523aca0c82e20fff7bbc22001cb57b2f840cc277dc5cb8d1c8e134905"
     },
     {
       "path": "docs/public/README.zh-CN.md",
       "bytes": 10250,
-      "sha256": "101925960515116313b4744ba37d2e5c0e052ee0c11cbfd2111ab61ff2091ea8"
+      "sha256": "45f468a523aca0c82e20fff7bbc22001cb57b2f840cc277dc5cb8d1c8e134905"
     },
     {
       "path": "docs/RELEASE_NOTES.md",
-      "bytes": 10314,
-      "sha256": "e1efa3c509d41e616313740471a404d9e9f419d4877550047d0674e38f942a55"
+      "bytes": 11670,
+      "sha256": "bd76fe43ffa1053784be86603a940358ef531687db8065b098a78d4aaf5c8778"
     },
     {
       "path": "docs/public/RELEASE_NOTES.md",
-      "bytes": 10314,
-      "sha256": "e1efa3c509d41e616313740471a404d9e9f419d4877550047d0674e38f942a55"
+      "bytes": 11670,
+      "sha256": "bd76fe43ffa1053784be86603a940358ef531687db8065b098a78d4aaf5c8778"
     },
     {
       "path": "docs/USER_GUIDE.md",
-      "bytes": 14028,
-      "sha256": "a1b8220d3aae6f1ba10b282f28d5227553b651b6aefeb2cafd001f1e12a34230"
+      "bytes": 14563,
+      "sha256": "4cf26f3aaa2177fb8234f5536d425ef564a74490508e9a0d85b5ef88369ce955"
     },
     {
       "path": "docs/public/USER_GUIDE.md",
-      "bytes": 14028,
-      "sha256": "a1b8220d3aae6f1ba10b282f28d5227553b651b6aefeb2cafd001f1e12a34230"
+      "bytes": 14563,
+      "sha256": "4cf26f3aaa2177fb8234f5536d425ef564a74490508e9a0d85b5ef88369ce955"
     },
     {
       "path": "docs/USER_GUIDE.zh-CN.md",
-      "bytes": 13441,
-      "sha256": "defda6c23d03c2a0c7f4d834e8809b64bc9571041da6e11eb4826ff0f61c63c8"
+      "bytes": 13942,
+      "sha256": "483b3fdcc6c18602b1975b402a42cec2acb7a57d6241170fb8f20a10d99d2ab8"
     },
     {
       "path": "docs/public/USER_GUIDE.zh-CN.md",
-      "bytes": 13441,
-      "sha256": "defda6c23d03c2a0c7f4d834e8809b64bc9571041da6e11eb4826ff0f61c63c8"
+      "bytes": 13942,
+      "sha256": "483b3fdcc6c18602b1975b402a42cec2acb7a57d6241170fb8f20a10d99d2ab8"
     },
     {
       "path": "AGENTS.md",
@@ -509,7 +514,7 @@
     }
   ],
   "scan": {
-    "textFiles": 95,
+    "textFiles": 96,
     "findings": []
   },
   "limitations": "Pattern scan only; the icon and separately reviewed PNG assets are binary assets, not text-scanned. No runtime or original Git history included."

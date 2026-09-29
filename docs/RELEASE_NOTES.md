@@ -2,6 +2,26 @@
 
 中文说明在每个版本的英文部分之后。
 
+## 0.3.1
+
+Unread replies that clear as you read, and a way to find them.
+
+- **The unread count clears as you read.** A reply counts as read once you've seen its end, however
+  long it is, and so does a work session's "completed" update. Before, those could leave a room
+  showing unread replies for good.
+- **Jump to the first unread.** While a room has unread replies, **N unread · Jump to the first** at
+  the top takes you there, even when it is further back than what is loaded. A room with unread
+  replies opens at the first of them, under a **New since you last read** line.
+- **Updating from 0.3.0:** in **Settings → Updates**, click **Update to v0.3.1…**. From 0.2.x, see the
+  0.3.0 notes below.
+
+**中文：** 未读会随着阅读清掉，也能直接跳到未读。
+- **未读会清掉**：看到一条回复的末尾就算读过，不管它多长；协作任务里“完成”的更新也一样。以前这些会让群一直
+  显示有未读。
+- **跳到第一条未读**：群里有未读时，顶部有 **N 条未读 · 跳到第一条**，点一下就过去，还没加载到的也能到。打开
+  有未读的群，会直接停在第一条未读，上面有 **以下是新消息** 的分隔线。
+- **从 0.3.0 升级**：在 **设置 → 更新** 里点 **更新到 v0.3.1…**。从 0.2.x 升级，见下面 0.3.0 的说明。
+
 ## 0.3.0
 
 Updates from the window, and fewer ways to get stuck.

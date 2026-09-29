@@ -109,6 +109,16 @@ starts a work session by itself, with the standard budget and time limit. The ro
 started, on the strength of which message, and with which plan; **Stop** works as usual. Only your
 own messages count, and if only one agent confirms, nothing starts. **Kick off** works as before.
 
+### Unread replies
+
+The number beside a room in the sidebar counts the replies, work answers and completed-work updates
+you haven't seen yet. One counts as seen once its end has been on screen while the window is in
+front; nothing is counted while the window is hidden or in the background.
+
+- A room with unread replies opens at the first of them, under a **New since you last read** line.
+- While a room has unread replies, **N unread · Jump to the first** at the top takes you to the first
+  one, loading older history if needed.
+
 ## Work sessions
 
 Turn on **Kick off** before sending when the two should work together and make changes. Set:

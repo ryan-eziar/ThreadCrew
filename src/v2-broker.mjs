@@ -23,6 +23,10 @@ const byteSize = value => Buffer.byteLength(json(value));
 const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
 const fingerprint = value => createHash('sha256').update(json(canonical(value))).digest('hex');
 const cursor = value => Buffer.from(json(value)).toString('base64url');
+// Keep the room badge, its locator and read acknowledgements on one predicate.
+const UNREAD_ITEM_SQL = `(kind='reply' OR (kind='work' AND
+  (json_extract(data_json,'$.eventKind')='response' OR
+  (json_extract(data_json,'$.eventKind')='participant_state' AND json_extract(data_json,'$.workState')='completed'))))`;
 
 export class V2BrokerError extends Error {
   constructor(code, message = code, status = 409, details = null, outcome = 'rejected') {
@@ -685,11 +689,17 @@ export class V2Broker extends EventEmitter {
       canReceive: member.canReceive, canReceiveCollaboration: member.canReceiveCollaboration }));
     const work = await sql.get("SELECT id,state,occupancy FROM work_sessions WHERE room_id=? AND occupancy='held' LIMIT 1", [room.id]);
     const attention = await this.#attentionTx(sql,room,20);
+    const first = room.unread_reply_count > 0 ? await sql.get(`SELECT id,order_num FROM timeline
+      WHERE room_id=? AND order_num>? AND ${UNREAD_ITEM_SQL} ORDER BY order_num LIMIT 1`,
+      [room.id,room.read_through_order]) : null;
     return { id: room.id, version: room.version, createdOrder: room.created_order, name: room.name,
       lifecycle: room.lifecycle, createdAt: room.created_at, archivedAt: room.archived_at,
       lastActivityAt: room.last_activity_at, latestPreview: room.latest_preview,
       latestOrder: room.latest_order, readThroughOrder: room.read_through_order,
-      unreadReplyCount: room.unread_reply_count, members: mapped,
+      unreadReplyCount: room.unread_reply_count,
+      firstUnread: first ? { timelineItemId:first.id,timelineOrder:first.order_num,
+        aroundCursor:cursor({v:1,workspaceId:this.#workspaceId,roomId:room.id,order:first.order_num,direction:'around'}) } : null,
+      members: mapped,
       pendingCount: room.pending_count, needsAttention: attention.count > 0,
       needsAttentionCount: attention.count, attentionKinds: [...new Set(attention.items.map(item => item.kind))],
       work: work ? { id: work.id, coordinationState: work.state, occupancy: work.occupancy } : null };
@@ -1097,11 +1107,9 @@ export class V2Broker extends EventEmitter {
     return this.mutate('room.read_position',roomId,input,async ctx => {
       if (input.throughOrder > ctx.room.latest_order) fail('ORDER_OUT_OF_RANGE');
       ctx.room.read_through_order = Math.max(ctx.room.read_through_order,input.throughOrder);
-      const ordinary = await ctx.sql.get("SELECT COUNT(*) AS n FROM timeline WHERE room_id=? AND order_num>? AND kind='reply'", [roomId,ctx.room.read_through_order]);
-      const work = await ctx.sql.get(`SELECT COUNT(*) AS n FROM timeline WHERE room_id=? AND order_num>? AND kind='work'
-        AND (json_extract(data_json,'$.eventKind')='response' OR (json_extract(data_json,'$.eventKind')='participant_state'
-        AND json_extract(data_json,'$.workState')='completed'))`, [roomId,ctx.room.read_through_order]);
-      ctx.room.unread_reply_count = ordinary.n + work.n;
+      const unread = await ctx.sql.get(`SELECT COUNT(*) AS n FROM timeline
+        WHERE room_id=? AND order_num>? AND ${UNREAD_ITEM_SQL}`, [roomId,ctx.room.read_through_order]);
+      ctx.room.unread_reply_count = unread.n;
       const abandonedLate=await ctx.sql.get(`SELECT COUNT(*) AS n FROM timeline t JOIN replies r ON r.id=t.ref_id
         WHERE t.room_id=? AND t.order_num>? AND t.kind='reply' AND r.late_reasons_json LIKE '%wait_abandoned%'`,
         [roomId,ctx.room.read_through_order]);

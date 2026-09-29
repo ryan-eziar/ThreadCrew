@@ -558,6 +558,10 @@
       roomId, control: null, entries: new Map(), sorted: [], revision: null, eventCursor: null,
       nextBeforeCursor: null, nextAfterCursor: null, detached: false, win: { start: 0, end: 0 },
       newCount: 0, draft: '', scrollTop: null, stick: true, cache: new Map(), loading: false, readPosted: 0, headTrimmed: false,
+      unreadFrom: null, // the read position when the room was opened with unread replies: the "new messages" line
+      unreadLoc: null, // the broker's first-unread locator at that opening: { timelineItemId, timelineOrder, aroundCursor }
+      unreadLanding: null, // { state } until the view has landed on the first unread (landUnread)
+      readSending: 0, // a read position sent and not yet answered
       attach: [], // files for the next message: { key, name, bytes, mediaType, file, state, id, error, opId, preview }
       epoch: 0, resyncing: false,
     };
@@ -1012,6 +1016,12 @@
     const gen = ++st.openGen;
     const nav = navGen;
     const v = touchView(roomId);
+    // Where the unread replies begin, as the room stood when it was opened; kept for this visit. With
+    // unread replies the room opens at the first of them rather than at the end (landUnread).
+    const summary = st.catalog.rooms.get(roomId);
+    v.unreadFrom = summary && summary.unreadReplyCount > 0 ? summary.readThroughOrder : null;
+    v.unreadLoc = v.unreadFrom != null && summary.firstUnread && summary.firstUnread.timelineItemId ? summary.firstUnread : null;
+    v.unreadLanding = v.unreadFrom != null ? { state: 'waiting' } : null;
     if ($('input')) { $('input').value = v.draft || store.sget(`agentchat.draft.${roomId}`) || ''; autoGrow(); }
     render();
     if (!v.control || v.revision === null) await reloadView(v);
@@ -1257,8 +1267,9 @@
   }
 
   // A loaded entry (from the conversation rail): bring it into the DOM window and put it at the top.
+  // `instant` goes there without the smooth scroll (opening a room at its first unread reply).
   let landing = null; // a rail jump still on its way: { roomId, id, land }
-  function jumpToEntry(v, itemId) {
+  function jumpToEntry(v, itemId, { instant = false } = {}) {
     const land = beginNav();
     const idx = v.sorted.findIndex((e) => e.id === itemId);
     if (idx < 0) return;
@@ -1271,7 +1282,7 @@
     const el = $('timeline').querySelector(`[data-id="${CSS.escape(itemId)}"]`);
     if (!el) return;
     const tl = $('timeline');
-    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const reduce = instant || (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     const target = tl.scrollTop + el.getBoundingClientRect().top - tl.getBoundingClientRect().top - 24;
     tl.scrollTo({ top: target, behavior: reduce ? 'auto' : 'smooth' });
     // A smooth scroll can be dropped (window in the background); land there anyway, by the entry,
@@ -2692,27 +2703,80 @@
     });
   }
 
-  // Read position: only forward, only when the window is focused and the reply is visible.
+  // What the broker counts as unread: replies, work answers, and a participant reporting completed.
+  const countsUnread = (e) => e.kind === 'reply' || (e.kind === 'work' && Boolean(e.work)
+    && (e.work.eventKind === 'response' || (e.work.eventKind === 'participant_state' && e.work.workState === 'completed')));
+
+  // The first entry that was unread when the room was opened: the "new messages" line sits above it.
+  // The broker's locator when it gives one (the same rule as its count), else the first loaded
+  // entry of a counted kind after the read position at opening.
+  function firstUnread(v) {
+    if (!v) return null;
+    if (v.unreadLoc) return (v.entries && v.entries.get(v.unreadLoc.timelineItemId)) || null;
+    if (v.unreadFrom == null) return null;
+    return v.sorted.find((e) => e.order > v.unreadFrom && countsUnread(e)) || null;
+  }
+
+  // "N unread · jump to the first": the broker's current locator, loaded or not (around pagination),
+  // else the first loaded unread entry. The target is highlighted. Going there puts up the same
+  // guard as opening the room (landUnread): nothing counts as read until it has arrived, after a
+  // failed fetch neither, until the reader moves on their own.
+  function jumpToUnread(v) {
+    const summary = v && st.catalog.rooms.get(v.roomId);
+    const loc = summary && summary.firstUnread;
+    if (loc && loc.aroundCursor) {
+      const landing = { state: 'fetching' };
+      v.unreadLanding = landing;
+      Promise.resolve(jumpTo(v, loc.aroundCursor, loc.timelineItemId)).then(() => {
+        if (v.unreadLanding !== landing) return; // the reader moved on meanwhile
+        if (view() === v && v.entries.has(loc.timelineItemId)) { v.unreadLanding = null; scheduleReadPosition(); }
+        else landing.state = 'failed';
+      });
+      return;
+    }
+    const first = firstUnread(v);
+    if (first) { jumpToEntry(v, first.id); highlight(first.id); }
+  }
+
+  // The read position is "read through" a timeline order: the highest order whose end has come into
+  // view, or is already above it. A reply taller than the window counts once its end is seen; one
+  // still running off the bottom does not. Every kind counts, so a work update or a system line seen
+  // at the end of the room carries the position past the replies above it. Pure, for the tests.
+  function seenThrough(items, viewBottom) {
+    let highest = 0;
+    for (const it of items) if (it.bottom <= viewBottom + 1) highest = Math.max(highest, it.order);
+    return highest;
+  }
+
+  // Read position: only forward, only while the window is visible and focused. Asked for after a
+  // scroll, a render, and the window coming back; at most once a second. It is sent for the room it
+  // was measured in, and counts as posted only once the broker accepted it: a failed request leaves
+  // the next trigger free to send it again.
   let readTimer = null;
   function scheduleReadPosition() {
-    clearTimeout(readTimer);
+    if (readTimer) return;
     readTimer = setTimeout(postReadPosition, 1000);
   }
-  function postReadPosition() {
+  async function postReadPosition() {
+    readTimer = null;
     const v = view();
-    if (!v || document.visibilityState !== 'visible' || !document.hasFocus()) return;
+    if (!v || !v.control || document.visibilityState !== 'visible' || !document.hasFocus() || exiting() || st.updateFollow) return;
+    if (v.unreadLanding) return; // not landed on the first unread yet, and the reader hasn't moved: count nothing
     const tl = $('timeline');
     const box = tl.getBoundingClientRect();
-    let highest = 0;
-    for (const el of tl.querySelectorAll('[data-reply-order]')) {
-      const r = el.getBoundingClientRect();
-      if (r.top >= box.top - 1 && r.bottom <= box.bottom + 1) highest = Math.max(highest, Number(el.dataset.replyOrder));
+    const items = [];
+    for (const el of tl.querySelectorAll('[data-id]')) {
+      const e = v.entries.get(el.dataset.id);
+      if (e && Number.isSafeInteger(e.order)) items.push({ order: e.order, bottom: el.getBoundingClientRect().bottom });
     }
+    const highest = seenThrough(items, box.bottom);
     const summary = st.catalog.rooms.get(v.roomId);
-    const known = Math.max(v.readPosted, summary ? summary.readThroughOrder : 0);
+    const known = Math.max(v.readPosted, v.readSending, summary ? summary.readThroughOrder : 0);
     if (highest <= known) return;
-    v.readPosted = highest;
-    src.post(roomPath('/read-position'), { operationId: uuid(), throughOrder: highest });
+    v.readSending = highest;
+    const res = await src.post(`${src.roomPath(v.roomId)}/read-position`, { operationId: uuid(), throughOrder: highest });
+    if (v.readSending === highest) v.readSending = 0;
+    if (res && res.ok) v.readPosted = Math.max(v.readPosted, highest);
   }
 
   // ---- Attachments and copy ----------------------------------------------------------
@@ -3797,11 +3861,13 @@
     }
     const dayOf = (e) => (e && e.at ? new Date(e.at).toDateString() : null);
     let lastDay = v.win.start > 0 ? dayOf(v.sorted[v.win.start - 1]) : null;
+    const unreadAt = firstUnread(v);
     for (let i = v.win.start; i < v.win.end; i++) {
       const e = v.sorted[i];
       const day = dayOf(e);
       if (day && day !== lastDay) inner.append(h('div', { class: 'day-divider', role: 'separator' }, h('span', null, dayLabel(e.at))));
       if (day) lastDay = day;
+      if (e === unreadAt) inner.append(h('div', { class: 'unread-divider', role: 'separator', id: 'unread-divider' }, h('span', null, t('以下是新消息'))));
       const node = cachedNode(v, e);
       if (node) inner.append(node);
     }
@@ -3827,6 +3893,59 @@
     if (tailObserver) { tailObserver.disconnect(); tailObserver.observe(inner); tailObserver.observe(tl); }
     updateJumps();
     renderRail();
+    landUnread(v);
+    scheduleReadPosition(); // what is on screen now counts, without waiting for a scroll
+  }
+
+  // A room opened with unread replies shows the first of them. Until it has landed there, nothing is
+  // counted as read (postReadPosition): not while the entries or an around page are still coming,
+  // not after that fetch failed, and never because time passed. Only the reader's own navigation
+  // ends a landing early (readerMoved), and reading then goes on from where they are.
+  // v.unreadLanding: null, or { state: 'waiting' | 'jumping' | 'fetching' | 'failed' }.
+  function landUnread(v) {
+    const landing = v.unreadLanding;
+    if (!landing || landing.state !== 'waiting') return;
+    const first = firstUnread(v);
+    if (first) {
+      landing.state = 'jumping';
+      setTimeout(() => {
+        if (view() !== v || v.unreadLanding !== landing) return;
+        jumpToEntry(v, first.id, { instant: true });
+        showUnreadLine();
+        v.unreadLanding = null;
+        scheduleReadPosition();
+      }, 0);
+      return;
+    }
+    // The broker's locator points past what is loaded: fetch around it, still counting nothing.
+    const loc = v.unreadLoc;
+    if (loc && loc.aroundCursor && v.sorted.length) {
+      landing.state = 'fetching';
+      setTimeout(async () => {
+        if (view() !== v || v.unreadLanding !== landing) return;
+        await jumpTo(v, loc.aroundCursor, loc.timelineItemId);
+        if (v.unreadLanding !== landing) return; // the reader moved on meanwhile
+        if (view() === v && v.entries.has(loc.timelineItemId)) { v.unreadLanding = null; scheduleReadPosition(); }
+        else landing.state = 'failed'; // stays guarded until the reader moves
+      }, 0);
+    }
+  }
+
+  // Show the "new messages" line itself at the top, not just below the edge.
+  function showUnreadLine() {
+    const tl = $('timeline');
+    const line = $('unread-divider');
+    if (tl && line) tl.scrollTop += line.getBoundingClientRect().top - tl.getBoundingClientRect().top - 12;
+  }
+
+  // Where the reader's own scrolling, keys and jumps happen (see wire); the unread pill is excluded.
+  const READER_NAV = '#timeline, .jumps, #rail, #outline, #room-extras';
+
+  // The reader scrolled, pressed a scrolling key or used a jump in the open room: a landing still on
+  // its way gives way, and what they now see can count as read.
+  function readerMoved() {
+    const v = view();
+    if (v && v.unreadLanding) { v.unreadLanding = null; scheduleReadPosition(); }
   }
 
   // Content can still grow after a render (late font or layout work, long replies): while the
@@ -3846,7 +3965,7 @@
     const badge = $('jump-badge');
     const v = view();
     const tl = $('timeline');
-    if (!top || !v || !v.control || !v.sorted.length) { if (top) { top.hidden = true; latest.hidden = true; } return; }
+    if (!top || !v || !v.control || !v.sorted.length) { if (top) { top.hidden = true; latest.hidden = true; $('jump-unread').hidden = true; } return; }
     // Keep the buttons and the rail over the timeline, whatever height the composer has now.
     const app = tl.parentElement.getBoundingClientRect();
     const box = tl.getBoundingClientRect();
@@ -3861,6 +3980,17 @@
     badge.hidden = !v.newCount;
     badge.textContent = v.newCount > 99 ? '99+' : String(v.newCount);
     latest.title = v.newCount ? t('有 {0} 条新消息', v.newCount) : t('回到最新');
+    // While the room has unread replies, a pill at the top says how many and jumps to the first of
+    // them (see jumpToUnread). It goes once they are read.
+    const pill = $('jump-unread');
+    const summary = st.catalog.rooms.get(v.roomId);
+    const unread = summary ? summary.unreadReplyCount || 0 : 0;
+    const reachable = Boolean(unread && ((summary.firstUnread && summary.firstUnread.aroundCursor) || firstUnread(v)));
+    pill.hidden = !reachable;
+    if (reachable) {
+      pill.style.top = `${Math.round(box.top - app.top + 12)}px`;
+      pill.textContent = t('{0} 条未读 · 跳到第一条', unread > 99 ? '99+' : unread);
+    }
   }
 
   // Conversation rail (as agreed with Codex, after Codex Desktop): faint short ticks on the left,
@@ -4411,6 +4541,7 @@
         h('div', { id: 'room-extras', class: 'room-extras' }),
         h('div', { id: 'notice', class: 'notice', role: 'status', hidden: true }),
         h('main', { class: 'timeline', id: 'timeline', role: 'log', 'aria-live': 'polite', 'aria-label': t('聊天记录') }),
+        h('button', { id: 'jump-unread', class: 'unread-pill', type: 'button', hidden: true }),
         h('nav', { id: 'rail', class: 'rail', 'aria-label': t('对话导航'), hidden: true }),
         h('div', { id: 'outline', class: 'outline-card', role: 'dialog', 'aria-label': t('对话导航'), hidden: true }),
         h('div', { class: 'jumps' },
@@ -4504,6 +4635,19 @@
     // Anything the user does to scroll cancels a pending landing (not the page loads it starts).
     for (const type of ['wheel', 'touchstart', 'pointerdown', 'keydown']) $('timeline').addEventListener(type, cancelLanding, { passive: true });
     $('jump-latest').addEventListener('click', () => { const v = view(); if (v) jumpToLatest(v); });
+    $('jump-unread').addEventListener('click', () => { const v = view(); if (v) jumpToUnread(v); });
+    // The reader's own navigation in the open room (not typing in the composer). The unread pill is
+    // not one: it goes to the first unread under its own guard (jumpToUnread).
+    const inRoom = (target) => Boolean(target && target.closest && target.closest(READER_NAV)
+      && !target.closest('#jump-unread'));
+    const SCROLL_KEYS = ['PageUp', 'PageDown', 'ArrowUp', 'ArrowDown', 'Home', 'End', ' '];
+    document.addEventListener('wheel', (e) => { if (inRoom(e.target)) readerMoved(); }, { passive: true });
+    document.addEventListener('touchstart', (e) => { if (inRoom(e.target)) readerMoved(); }, { passive: true });
+    document.addEventListener('pointerdown', (e) => { if (inRoom(e.target)) readerMoved(); });
+    document.addEventListener('keydown', (e) => { if (inRoom(e.target) && SCROLL_KEYS.includes(e.key)) readerMoved(); });
+    // Coming back to the window counts what is on screen as read.
+    window.addEventListener('focus', scheduleReadPosition);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') scheduleReadPosition(); });
     $('jump-top').addEventListener('click', () => { const v = view(); if (v) jumpToStart(v); });
     $('jump-outline').addEventListener('click', () => setOutlineOpen($('outline').hidden));
     document.addEventListener('mousedown', (e) => {

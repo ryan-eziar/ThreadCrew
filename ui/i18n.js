@@ -548,6 +548,8 @@
     '输入 @ 可以只发给其中一位。': 'Type @ to send to only one of them.',
     '发消息是先讨论；要他们动手改，直接说明，或者点输入框下面的「开工」。': 'A message starts a discussion. To have them make changes, say so, or use Kick off below the input.',
     '有 {0} 条新消息': '{0} new messages',
+    '以下是新消息': 'New since you last read',
+    '{0} 条未读 · 跳到第一条': '{0} unread · Jump to the first',
     '跳到开头': 'Jump to the start',
     '目录': 'Outline',
     '对话导航': 'Conversation map',

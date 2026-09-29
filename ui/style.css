@@ -500,6 +500,15 @@ kbd {
 
 .day-divider { display: flex; justify-content: center; margin: 2px 0; }
 .day-divider span { padding: 4px 16px; border-radius: 999px; box-shadow: var(--in-1); color: var(--muted); font-size: 11.5px; font-weight: 600; letter-spacing: .08em; }
+.unread-divider { display: flex; align-items: center; gap: 12px; margin: 4px 0; color: var(--accent-text); font-size: 11.5px; font-weight: 600; letter-spacing: .04em; }
+.unread-divider::before, .unread-divider::after { content: ""; flex: 1; height: 2px; border-radius: 1px; background: var(--accent-ring); }
+.unread-pill {
+  position: absolute; left: 50%; z-index: 6; transform: translateX(-50%); height: 32px; padding: 0 16px;
+  border: none; border-radius: 999px; background: var(--base); color: var(--accent-text); box-shadow: var(--out-2);
+  font-size: 12.5px; font-weight: 600; white-space: nowrap; cursor: pointer; animation: fade-in .16s ease-out;
+}
+.unread-pill:hover { box-shadow: var(--out-3); }
+.unread-pill[hidden] { display: none; }
 .divider { display: flex; align-items: center; gap: 14px; margin: 2px 0; color: var(--faint); font-size: 12px; }
 .divider::before, .divider::after { content: ""; flex: 1; height: 2px; border-radius: 1px; box-shadow: var(--in-1); }
 

@@ -46,6 +46,50 @@ async function fixture(t, options = {}) {
   return { broker, work, roomId, codex, claude, gate, begin, accept, request, handoff, runtimeDir };
 }
 
+test('unread locator reaches unloaded replies and both completed work records, then clears with the read cursor', async t => {
+  const f=await fixture(t);
+  const summary=async()=>(await f.broker.listRooms()).rooms.find(r=>r.id===f.roomId);
+  assert.equal((await summary()).firstUnread,null);
+  await f.broker.sendHuman(f.roomId,{operationId:op('ordinary-unread'),expectedGate:await f.gate(),
+    recipients:['claude'],text:'Synthetic ordinary question',attachmentIds:[]});
+  const ordinary=await f.broker.read(f.roomId,f.claude.bindingId,{requestId:op('ordinary-read')},()=>{});
+  await f.broker.postReply(f.roomId,f.claude.bindingId,{deliveryId:ordinary.deliveryId,claimId:ordinary.claimId,text:'Synthetic ordinary answer'});
+  const started=await f.begin();
+  await f.accept(started,'codex');await f.accept(started,'claude','unread-kickoff-claim');
+  const request=await f.request(started.work.id,f.codex.bindingId,f.claude.bindingId);
+  const claim=(await f.work.agent('checkpoint',f.roomId,started.work.id,f.claude.bindingId,{operationId:op('unread-request-claim')})).items[0];
+  await f.work.agent('responses',f.roomId,started.work.id,f.claude.bindingId,
+    {operationId:op('unread-response'),requestId:request.requestId,claimId:claim.claimId,text:'Synthetic work answer',attachmentIds:[]});
+  const response=(await f.work.agent('checkpoint',f.roomId,started.work.id,f.codex.bindingId,{operationId:op('unread-response-claim')})).items[0];
+  await f.work.agent('received',f.roomId,started.work.id,f.codex.bindingId,
+    {operationId:op('unread-response-receipt'),requestId:request.requestId,claimId:response.claimId});
+  for(const who of ['codex','claude']){
+    const p=(await f.work.get(f.roomId,started.work.id)).participants.find(p=>p.agent===who);
+    await f.work.agent('state',f.roomId,started.work.id,p.bindingId,
+      {operationId:op('unread-completed'),expectedParticipantVersion:p.version,workState:'completed',text:'Synthetic task completed'});
+  }
+  const counted=(await f.broker.getTimeline(f.roomId,{limit:100})).items.filter(e=>e.kind==='reply'||
+    (e.kind==='work'&&(e.work.eventKind==='response'||(e.work.eventKind==='participant_state'&&e.work.workState==='completed'))));
+  assert.equal(counted.length,4);
+  const tail=await f.broker.getTimeline(f.roomId,{limit:2});
+  assert.ok(!tail.items.some(e=>e.id===counted[0].id),'first unread is outside the latest loaded page');
+  const other=await f.broker.createRoom({operationId:op('unread-other-room'),name:'Other synthetic room'});
+  for(let n=0;n<counted.length;n++){
+    const room=await summary(),target=counted[n];
+    assert.equal(room.unreadReplyCount,counted.length-n);
+    assert.equal(room.firstUnread.timelineItemId,target.id);
+    assert.equal(room.firstUnread.timelineOrder,target.order);
+    const page=await f.broker.getTimeline(f.roomId,{around:room.firstUnread.aroundCursor,limit:3});
+    assert.equal(page.targetItemId,target.id);assert.ok(page.items.some(e=>e.id===target.id));
+    await assert.rejects(f.broker.getTimeline(other.roomId,{around:room.firstUnread.aroundCursor}),code('INVALID_CURSOR'));
+    await f.broker.setReadPosition(f.roomId,{operationId:op('unread-seen'),throughOrder:target.order});
+    await f.broker.setReadPosition(f.roomId,{operationId:op('unread-old-ack'),throughOrder:0});
+    assert.equal((await summary()).readThroughOrder,target.order,'late old acknowledgement cannot move the cursor back');
+  }
+  assert.equal((await summary()).unreadReplyCount,0);
+  assert.equal((await summary()).firstUnread,null);
+});
+
 test('combined wait receives ordinary and scoped work notifications without a second waiter', { timeout: 20000 }, async t => {
   const f = await fixture(t); const started = await f.begin();
   await f.accept(started, 'codex'); await f.accept(started, 'claude', 'combined-kickoff-claim');

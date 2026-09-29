@@ -2,7 +2,7 @@ import { extname, resolve } from 'node:path';
 import { createAttachment, readAttachmentBytes } from './broker-storage.mjs';
 import { isSupportedNode, SUPPORTED_NODE_RANGE } from './node-runtime.mjs';
 
-export const PRODUCT = { product: 'ThreadCrew', version: '0.3.0', author: 'Ryan Zhang', license: 'MIT' };
+export const PRODUCT = { product: 'ThreadCrew', version: '0.3.1', author: 'Ryan Zhang', license: 'MIT' };
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const fail = (code, status = 400) => { throw Object.assign(new Error(code), { code, status, outcome: 'rejected' }); };
 const parse = (value, fallback = null) => value == null ? fallback : JSON.parse(value);
