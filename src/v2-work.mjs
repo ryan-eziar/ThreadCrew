@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { readAttachmentBytes } from './broker-storage.mjs';
 import { V2BrokerError } from './v2-broker.mjs';
 import { workAuthorization } from './delivery-authority.mjs';
+import { confirmStart, pendingKickoff, startContext } from './work-start-confirmation.mjs';
 
 const agents = ['codex', 'claude'];
 const receiveModes = new Set(['unverified', 'next_step', 'next_turn', 'unavailable']);
@@ -148,7 +149,12 @@ export class WorkCoordinator {
     if (!body.expectedBindings || typeof body.expectedBindings !== 'object' || Array.isArray(body.expectedBindings) || Object.keys(body.expectedBindings).length !== 2 || !agents.every(a => typeof body.expectedBindings[a] === 'string')) reject('INVALID_INPUT', 400);
     if (!body.objective.trim() || !body.text.trim()) reject('INVALID_INPUT', 400);
     boundedNumber(body.requestLimit, 1, 10000); boundedNumber(body.wakeLimit, 0, 10000); boundedNumber(body.durationSeconds, 60, 36000);
-    const result = await this.broker.mutate('work.start', roomId, body, async ctx => {
+    const result = await this.broker.mutate('work.start', roomId, body, ctx => this.startTx(ctx,roomId,body));
+    this.armExpiry(result.work); return result;
+  }
+  confirmStart(roomId,bindingId,body) { return confirmStart(this,roomId,bindingId,body); }
+  startContext(roomId,bindingId) { return startContext(this,roomId,bindingId); }
+  async startTx(ctx,roomId,body,{sourceMessageId=null,authority=null,planText=null}={}) {
       const old = await this.current(ctx.sql, roomId);
       if (old) reject('WORK_IN_PROGRESS', 409, { workId: old.id, objective: old.objective, timelineItemId: old._startTimelineId, aroundCursor: old._aroundCursor ?? null });
       const participants = [];
@@ -157,15 +163,17 @@ export class WorkCoordinator {
         if (!b || body.expectedBindings?.[agent] !== b.id) reject('BINDING_CHANGED');
         participants.push({ agent, bindingId:b.id, nativeSessionId:b.native_session_id,version:1,acceptance:'pending',acceptanceReplyId:null,workState:'not_started',stateReportedAt:null,lastCheckpointAt:null,receiveMode:this.receiveModes[agent],inboxWait:agent==='claude'?'not_armed':null,inboxWaitAt:null,leaseDeadlineAt:b.deadline_at });
       }
-      const source = await ctx.addHumanMessage({ text:body.text,attachmentIds:body.attachmentIds,recipients:agents });
+      const source = sourceMessageId ? {messageId:sourceMessageId,deliveryIds:{},gate:{segmentId:ctx.room.gate_segment_id,version:ctx.room.gate_version}}
+        : await ctx.addHumanMessage({ text:body.text,attachmentIds:body.attachmentIds,recipients:agents });
+      if(sourceMessageId) for(const agent of agents) source.deliveryIds[agent]=(await ctx.addDelivery({agent,text:body.text,attachmentIds:body.attachmentIds,messageId:sourceMessageId})).id;
       const w = { id:uid('work'),roomId,version:0,segmentId:source.gate.segmentId,sourceHumanMessageId:source.messageId,objective:body.objective,scopeSummary:'Only the user-authorized task in the selected native conversations',startedAt:ctx.now,expiresAt:new Date(Date.parse(ctx.now)+body.durationSeconds*1000).toISOString(),coordinationState:'active',pauseReasons:[],occupancy:'held',requestBudget:{limit:body.requestLimit,used:0,remaining:body.requestLimit},wakeBudget:{limit:body.wakeLimit,used:0,remaining:body.wakeLimit},participants,pendingRequestCount:0,needsHumanCount:0,possibleRunningAgents:[],actions:{},_nextRequestNumber:1,_kickoff:source.deliveryIds,_notifications:{},_progress:{} };
+      w.authority=authority??{kind:'human_kickoff',sourceHumanMessageId:source.messageId,confirmations:[]};
+      if(planText)w._planText=planText;
       for (const deliveryId of Object.values(source.deliveryIds)) await ctx.sql.run('UPDATE deliveries SET work_id=? WHERE id=?', [w.id,deliveryId]);
-      const entry = await this.event(ctx,w,'started','ryan',await ctx.createContent(body.objective,'plain'));
+      const entry = await this.event(ctx,w,'started','ryan',await ctx.createContent(body.objective,'plain'),{authority:w.authority});
       w._startTimelineId = entry.id; w._aroundCursor = await this.around(ctx.sql, roomId, entry.id);
       await this.saveWork(ctx,w);
       return { sourceHumanMessageId:source.messageId,work:await this.summary(ctx.sql,w),gate:source.gate };
-    });
-    this.armExpiry(result.work); return result;
   }
   async budget(roomId, workId, body) {
     only(body,['operationId','expectedGate','expectedWorkVersion','addRequests','addWakes']);
@@ -392,7 +400,7 @@ export class WorkCoordinator {
     for(const row of rows){const w=parse(row);if(where.includes('segment_id')&&w.segmentId!==params[0])continue;if(where.includes('binding_id')&&!w.participants.some(p=>p.bindingId===params[0]))continue;for(const agent of (await this.summary(sql,w)).possibleRunningAgents)running.add(agent);}
     return {...effects,possibleRunningAgents:agents.filter(a=>running.has(a)),possibleRunningCount:Math.max(effects.possibleRunningCount??0,running.size)};
   }
-  async projectControl(sql,roomId,control){const w=await this.current(sql,roomId);control.currentWork=w?await this.summary(sql,w):null;const effects=await this.effects(sql,roomId,control);control.possibleRunningCount=effects.possibleRunningCount;control.possibleRunningAgents=effects.possibleRunningAgents;return control;}
+  async projectControl(sql,roomId,control){const w=await this.current(sql,roomId);control.currentWork=w?await this.summary(sql,w):null;control.pendingKickoff=await pendingKickoff(sql,await sql.get('SELECT * FROM rooms WHERE id=?',[roomId]));const effects=await this.effects(sql,roomId,control);control.possibleRunningCount=effects.possibleRunningCount;control.possibleRunningAgents=effects.possibleRunningAgents;return control;}
   async projectMember(sql,roomId,member){
     member.canReceiveCollaboration=false;member.collaborationReceiveMode='unverified';member.collaborationEvidenceAt=null;
     const w=await this.current(sql,roomId);if(!w||!member.binding)return member;const p=w.participants.find(p=>p.bindingId===member.binding.id);if(!p)return member;

@@ -38,6 +38,19 @@ async function joinV2(f) {
 }
 const binding = ['--room', 'room-a', '--as', 'claude', '--binding', 'binding-a'];
 
+test('confirm-start reads a full pending plan and retries its original snapshot after an unknown outcome',async t=>{
+  const plan='Full agreed implementation plan',sha=createHash('sha256').update(plan).digest('hex');let contexts=0,posts=0;
+  const f=await fixture(t,({path,body})=>{
+    if(path.endsWith('/join'))return {bindingId:'binding-a',agent:'claude',nativeSessionId:'native-a',credential:'binding-secret'};
+    if(path.endsWith('/start-context')){contexts++;return {sourceHumanMessage:{id:'human-a',text:'Please implement after agreement.',textSha256:'a'.repeat(64)},expectedGate:{segmentId:'segment-a',version:4},expectedBindings:{codex:'binding-codex',claude:'binding-a'},pendingKickoff:{state:'waiting_peer',planText:plan,planSha256:sha}};}
+    if(path.endsWith('/confirm-start')){posts++;assert.equal(body.planText,plan);assert.equal(body.sourceTextSha256,'a'.repeat(64));return posts===1?{__error:{code:'RECOVERY_REQUIRED',outcome:'unknown'}}:{bindingId:'binding-a',agent:'claude',pendingKickoff:null,work:{id:'work-a'}};}
+  });
+  await joinV2(f);const args=['confirm-start',...binding,'--source-message','human-a','--pending','--plan-sha256',sha,'--authorized','--op','confirm-op'];
+  await assert.rejects(f.run(...args),e=>e.outcome==='unknown');
+  assert.equal((await f.run(...args)).work.id,'work-a');assert.equal(contexts,1);assert.equal(posts,2);
+  assert.deepEqual(f.calls.filter(c=>c.path.endsWith('/confirm-start'))[0].body,f.calls.at(-1).body);
+});
+
 test('work-status reads participant versions without creating an operation or widening room scope',async t=>{
   const f=await fixture(t,({path})=>path.endsWith('/join')?{bindingId:'binding-a',agent:'claude',nativeSessionId:'native-a',credential:'binding-secret'}:{bindingId:'binding-a',agent:'claude',workId:'work-a',work:{participants:[{agent:'claude',version:7}]}});
   await joinV2(f);const result=await f.run('work-status',...binding,'--work','work-a');

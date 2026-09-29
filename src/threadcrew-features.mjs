@@ -2,7 +2,7 @@ import { extname, resolve } from 'node:path';
 import { createAttachment, readAttachmentBytes } from './broker-storage.mjs';
 import { isSupportedNode, SUPPORTED_NODE_RANGE } from './node-runtime.mjs';
 
-export const PRODUCT = { product: 'ThreadCrew', version: '0.2.1', author: 'Ryan Zhang', license: 'MIT' };
+export const PRODUCT = { product: 'ThreadCrew', version: '0.3.0', author: 'Ryan Zhang', license: 'MIT' };
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const fail = (code, status = 400) => { throw Object.assign(new Error(code), { code, status, outcome: 'rejected' }); };
 const parse = (value, fallback = null) => value == null ? fallback : JSON.parse(value);
@@ -60,18 +60,20 @@ export class ThreadCrewFeatures {
     if (!room) fail('ROOM_NOT_FOUND', 404);
     return room;
   }
-  async settings() { return this.broker.store.read(async sql => ({ backgroundNoticeAcknowledged: false,
+  async settings() { return this.broker.store.read(async sql => ({ backgroundNoticeAcknowledged: false, autoCheckUpdates: true,
     ...await readValue(sql, settingsKey, { version: 0, displayName: '' }) })); }
   async setSettings(input) {
     const displayName = input.displayName === undefined ? undefined : shortText(input.displayName, 80).trim();
     if (displayName !== undefined && /[\x00-\x1f\x7f]/.test(displayName)) fail('INVALID_INPUT');
-    if ((displayName === undefined && input.backgroundNoticeAcknowledged === undefined)
-      || (input.backgroundNoticeAcknowledged !== undefined && typeof input.backgroundNoticeAcknowledged !== 'boolean')) fail('INVALID_INPUT');
+    if ((displayName === undefined && input.backgroundNoticeAcknowledged === undefined && input.autoCheckUpdates === undefined)
+      || (input.backgroundNoticeAcknowledged !== undefined && typeof input.backgroundNoticeAcknowledged !== 'boolean')
+      || (input.autoCheckUpdates !== undefined && typeof input.autoCheckUpdates !== 'boolean')) fail('INVALID_INPUT');
     return this.broker.mutate('settings.update', null, input, async ctx => {
       const previous = await readValue(ctx.sql, settingsKey, { version: 0, displayName: '' });
       if (input.expectedVersion !== previous.version) fail('VERSION_CONFLICT', 409);
-      const settings = { backgroundNoticeAcknowledged: false, ...previous, version: previous.version + 1,
+      const settings = { backgroundNoticeAcknowledged: false, autoCheckUpdates: true, ...previous, version: previous.version + 1,
         ...(displayName === undefined ? {} : { displayName }),
+        ...(input.autoCheckUpdates === undefined ? {} : { autoCheckUpdates: input.autoCheckUpdates }),
         ...(input.backgroundNoticeAcknowledged === undefined ? {} : { backgroundNoticeAcknowledged: input.backgroundNoticeAcknowledged }) };
       await writeValue(ctx.sql, settingsKey, settings);
       return { settings };
@@ -115,7 +117,9 @@ export class ThreadCrewFeatures {
         maxUploadBytes: MAX_UPLOAD_BYTES, maxAttachments: 20, nativeCancellationSupported: false } };
   }
   async shutdownPreview() {
-    return this.broker.store.read(async sql => {
+    return this.broker.store.read(sql => this.shutdownSnapshot(sql));
+  }
+  async shutdownSnapshot(sql) {
       const capturedAt = new Date().toISOString();
       const work = await sql.get("SELECT COUNT(DISTINCT room_id) AS n FROM work_sessions WHERE occupancy='held' AND state NOT IN ('completed','stopped','expired') AND expires_at>?", [capturedAt]);
       const deliveries = await sql.get(`SELECT
@@ -132,7 +136,24 @@ export class ThreadCrewFeatures {
         pendingWorkRequests: requests.pending, pendingWorkResponses: requests.responses,
         inFlightDeliveries: deliveries.in_flight, uncertainDeliveries: deliveries.uncertain,
       } };
-    });
+  }
+  async updatePreview(sql = null) {
+    if (!sql) return this.broker.store.read(tx => this.updatePreview(tx));
+    const snapshot = await this.shutdownSnapshot(sql);
+    const rooms = await sql.all(`SELECT r.id AS roomId,r.name AS roomName,
+      (SELECT COUNT(*) FROM deliveries d WHERE d.room_id=r.id AND d.final_reply_id IS NULL AND d.wait_disposition!='abandoned' AND d.state IN ('dispatching','awaiting_reply','uncertain')) AS unresolvedDeliveries,
+      (SELECT COUNT(*) FROM deliveries d WHERE d.room_id=r.id AND d.final_reply_id IS NULL AND d.wait_disposition!='abandoned' AND d.state IN ('queued','pending_binding')) AS queuedDeliveries,
+      (SELECT COUNT(*) FROM work_sessions w WHERE w.room_id=r.id AND w.occupancy='held' AND w.state NOT IN ('completed','stopped','expired') AND w.expires_at>?) AS activeWork
+      FROM rooms r`,[snapshot.capturedAt]);
+    const busy=[];
+    for(const room of rooms){
+      const requests=await sql.get("SELECT COUNT(*) AS n FROM work_requests WHERE room_id=? AND wait_disposition!='abandoned' AND (state IN ('queued','notified','claimed','awaiting_response','uncertain') OR json_extract(data_json,'$._responseState') IN ('queued','notified','claimed','uncertain'))",[room.roomId]);
+      if(!room.unresolvedDeliveries&&!room.queuedDeliveries&&!room.activeWork&&!requests.n)continue;
+      const bindings=await sql.all('SELECT agent FROM bindings WHERE room_id=? AND current=1 ORDER BY agent',[room.roomId]);
+      const pendingAgents=await sql.all("SELECT DISTINCT agent FROM deliveries WHERE room_id=? AND final_reply_id IS NULL AND wait_disposition!='abandoned' AND state IN ('queued','pending_binding','dispatching','awaiting_reply','uncertain')",[room.roomId]);
+      busy.push({...room,pendingWorkRequests:requests.n,activeWork:Boolean(room.activeWork),agents:room.activeWork?bindings.map(b=>b.agent):pendingAgents.map(b=>b.agent)});
+    }
+    return {...snapshot,rooms:busy};
   }
   async snapshot(roomId) {
     return this.broker.store.read(async sql => ({ room: await this.room(sql, roomId),

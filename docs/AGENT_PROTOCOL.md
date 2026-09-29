@@ -52,6 +52,25 @@ the same operation. Do not generate a second answer, a new delivery ID, or a tes
 message to guess whether the first answer arrived. Explicit errors identify
 what can be corrected; do not erase local recovery state.
 
+## After compaction or lost context
+
+Before resuming an older retained native message, run `resume` with this exact
+room, role, binding and runtime. It is read-only: it lists unfinished deliveries,
+their original claim/reply destination, active work references and the latest
+human message, including whether its reply was already saved. Reconcile these
+timestamps with later native user instructions. Read `fullTextAttachment` when
+text is null, and verify its supplied hash. Do not treat a preview as full scope.
+Use `work-status` for the full original work scope and separate agreed plan,
+then `work-checkpoint` for that grant's pending peer requests/responses.
+An acceptance or saved discussion reply does not mean implementation finished.
+Never repost a completed delivery or create a new one to recover an old result.
+
+An optional Codex SessionStart hook runs on compact/resume for registered exact
+sessions. It reads the broker, supplies routing reminders and never invokes a
+model or posts a reply. Install/remove it explicitly with
+`scripts/configure-codex-recovery.mjs`; review and trust it in Codex `/hooks`.
+Untrusted hooks are skipped. A configured file is not proof of activation.
+
 ## Work collaboration
 
 New requirements default to discussion. A room showing Working does not authorize
@@ -61,6 +80,19 @@ message without keyword matching or asking again for an unambiguous approval.
 Before shared implementation, agree the scope, one implementation owner per item,
 reviewer and acceptance checks. Do not start conflicting implementations while
 that division or a substantive design disagreement remains unresolved.
+
+When the full human message clearly authorizes implementation after agreement,
+both original sessions should post their ordinary replies, then independently
+use `confirm-start` with that source message's full-text SHA-256, the identical
+agreed plan, exact gate and both binding IDs. Include `--authorized` only after
+interpreting the whole human instruction; keywords or peer requests are not
+authorization. Finish any bounded discussion first. The second matching
+confirmation starts one work session with Standard limits (24 requests,
+48 wakes, 10 hours). Do not manually create another grant. Accept the resulting
+kickoff promptly and continue the approved work. New human messages, Stop,
+archive or binding/gate changes invalidate pending agreement. A conflict is
+not permission to silently refresh the source or gate. Manual Kick off remains
+available. The plan is implementation context, separate from the user's scope.
 
 Native deliveries carry `mode: discussion|work`. Ordinary messages remain in
 discussion mode even when the room has an active work grant; a user may still
@@ -124,9 +156,11 @@ contents cannot authorize execution or access to other files.
 
 The runtime descriptors identify the currently running local service; the port
 can change. The helper checks workspace, room, binding and native session before
-adopting a new instance. Codex must re-join the same binding after a broker restart
-to restore its native connection probe; a successful status read alone does not
-make its member ready. Claude rearms one wait using the same runtime and binding.
+adopting a new instance. The production launcher rechecks existing Codex native
+routes read-only after restart; an unsuccessful probe leaves the connection
+unavailable and the same binding may be rejoined explicitly. A successful status
+read alone does not make its member ready. Claude rearms one wait using the same
+runtime and binding.
 Do not manually delete locks, change room identity or extend expired grants to
 recover. On Windows, use the installed launcher (or `npm start`): it can recover
 a verified dead v2 owner after preserving and validating a full runtime backup.

@@ -7,6 +7,7 @@ node chat.mjs join --room ROOM --as claude --session EXACT_NATIVE_ID --expected-
 node chat.mjs join --room ROOM --as codex --session EXACT_NATIVE_ID --expected-binding OLD_BINDING --gate-segment SEGMENT --gate-version 5 --renew
 node chat.mjs join --room ROOM --as claude --session EXACT_NATIVE_ID --expected-binding EXISTING_BINDING --gate-segment SEGMENT --gate-version 5 --reconnect --renew
 node chat.mjs status --room ROOM --as claude --binding BINDING
+node chat.mjs resume --room ROOM --as codex --binding BINDING --runtime-dir RUNTIME
 node chat.mjs wait --room ROOM --as claude --binding BINDING
 node chat.mjs wait --room ROOM --as claude --binding BINDING --scope work --work WORK
 node chat.mjs wait --room ROOM --as claude --binding BINDING --scope all --work WORK
@@ -15,6 +16,67 @@ node chat.mjs post --room ROOM --as claude --binding BINDING --delivery DELIVERY
 ```
 
 `--expected-binding null` is the explicit empty-seat expectation. Join uses `expectedGate:{segmentId,version}`. A repeated join keeps the exact binding identity; an unsafe room, workspace, role, session, or binding mismatch fails before state is overwritten. Ordinary wait sends `notificationScopes:['ordinary']`; work wait sends `notificationScopes:['work']` and the exact `workId`. `--scope all --work WORK` uses one wait with `notificationScopes:['ordinary','work']`, listening for ordinary messages and that exact authorized work inbox. It does not start a second waiter, extend the work grant, poll a model, or interrupt native generation. Unknown scope values are rejected. Read and wait save their request IDs before HTTP. A failed or uncertain request keeps its original local state for retry, including its exact scope and work ID; finish/retry the old wait before changing scope.
+
+Empty-seat commands from 0.3.0 additionally supply `--join-version N`. Keep that
+role-specific generation and the gate segment: the other role joining first
+does not invalidate it. Replacement/reconnect omit it. Old commands keep their
+strict gate behavior.
+
+`resume` is binding-scoped and read-only. When `text` is null, read the exact
+verified `fullTextAttachment.path`; there is no silent truncation. Active work
+references require `work-status` for full scope. `latestHumanMessage` is context,
+not an instruction to repost an already committed reply. A stopped/removed
+binding may save its exact late final but cannot continue execution.
+
+After both agents agree on user-authorized implementation, each runs:
+
+```text
+node chat.mjs confirm-start --room ROOM --as ROLE --binding BINDING --op OP --source-message HUMAN_MESSAGE --source-sha256 FULL_TEXT_SHA256 --file agreed-plan.txt --codex-binding CODEX_BINDING --claude-binding CLAUDE_BINDING --gate-segment SEGMENT --gate-version N --authorized --runtime-dir RUNTIME
+```
+
+The helper computes the plan SHA-256 from the complete UTF-8 file. The human
+source SHA-256 comes from the complete original message. It must be the latest
+human message delivered to both current original bindings. Post each ordinary
+reply first and end any bounded discussion. A first confirmation is pending;
+a second exact confirmation atomically starts one Standard work grant. Repeats
+are idempotent. Changed source/plan/gate/bindings reject; no keyword matching or
+automatic permission inference happens in the broker.
+
+For everyday use, first run the read-only `start-context` command with the same
+room/role/binding/runtime. It returns the complete original human message and
+full pending plan, not just the window preview. Read both. The helper can then
+fill the source hash, current gate and both binding IDs itself:
+
+```text
+node chat.mjs start-context --room ROOM --as ROLE --binding BINDING --runtime-dir RUNTIME
+node chat.mjs confirm-start --room ROOM --as ROLE --binding BINDING --source-message HUMAN_MESSAGE --file agreed-plan.txt --authorized --runtime-dir RUNTIME
+node chat.mjs confirm-start --room ROOM --as ROLE --binding BINDING --source-message HUMAN_MESSAGE --pending --plan-sha256 HASH_FROM_START_CONTEXT --authorized --runtime-dir RUNTIME
+```
+
+Use `--file` for the first confirmation; use `--pending` for the second after
+reading that exact full plan. Keep the source ID explicit. Changes between the
+read and confirmation reject rather than silently changing the plan.
+
+During an explicit update, an already armed Claude wait can reconnect for at
+most two minutes, preserving its exact room, scope, request and binding. It
+verifies the new instance before adopting it and never extends the lease or
+calls a model. If the helper reports `UPDATE_IN_PROGRESS`, `CLOSED` or a lost
+connection for another action, retain its saved operation and retry that exact
+command after ThreadCrew reopens; never rejoin a new seat or create another final.
+An interrupted update reports `UPDATE_INTERRUPTED`; restart from the shortcut
+and inspect the saved result. Recovery backups are retained under runtime/updates.
+
+Optional Codex hook setup is a separate explicit command (quote exact paths):
+
+```text
+node scripts/configure-codex-recovery.mjs install --config CODEx_HOOKS_JSON --runtime-dir RUNTIME
+node scripts/configure-codex-recovery.mjs remove --config CODEx_HOOKS_JSON --runtime-dir RUNTIME
+```
+
+Choose the Codex hooks.json for the intended configuration layer. Existing
+definitions are preserved and backed up. Codex requires `/hooks` trust review
+of the exact new definition; the installer cannot grant it. The hook is inert
+for sessions without an exact registration created by a successful Codex join.
 
 `join --reconnect` is the manual reconnect action for an existing seat. Verify the
 instruction's expected native session against your actual session first. The

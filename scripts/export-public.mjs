@@ -11,6 +11,7 @@ const PNG_ASSETS = ['docs/media/threadcrew-poster.png',
 const CORE = ['chat.mjs','package.json','LICENSE','.gitignore','.gitattributes',
   '.github/ISSUE_TEMPLATE/bug-report.md',
   'scripts/launch-agent-chat.ps1','scripts/open-agent-chat.ps1','scripts/install-shortcut.ps1','scripts/agent-chat.ico',
+  'scripts/codex-recovery-hook.mjs','scripts/configure-codex-recovery.mjs',
   'scripts/export-public.mjs','docs/AGENT_PROTOCOL.md','docs/V2_HELPER_USAGE.md','docs/THIRD_PARTY_SOURCES.md',
   'docs/THREADCREW_RELEASE_CONTRACT.md',...PNG_ASSETS];
 const UI = ['index.html','boot.js','app-v2.js','source-v2.js','style.css','markdown.js','i18n.js'];
@@ -30,6 +31,7 @@ export function scanPublicText(path, text) {
   for (const [index,line] of text.split(/\r?\n/).entries()) {
     for (const [rule,pattern] of forbidden) if (pattern.test(line)) findings.push({path,line:index+1,rule});
     for (const email of line.matchAll(/[A-Za-z0-9_.+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g)) {
+      if(email[0]==='git@github.com' && line.includes('git@github.com:ryan-eziar/ThreadCrew.git')) continue; // Public SSH remote, not a personal email.
       if (!email[0].endsWith('@users.noreply.github.com') && !email[0].endsWith('@example.com')) findings.push({path,line:index+1,rule:'email'});
     }
   }

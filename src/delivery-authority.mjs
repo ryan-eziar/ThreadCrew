@@ -12,6 +12,6 @@ export async function workAuthorization(sql, roomId, workId, { includeText = fal
     workId, sourceHumanMessageId:work.sourceHumanMessageId, objective:work.objective,
     expiresAt:work.expiresAt, textSha256:createHash('sha256').update(source.text,'utf8').digest('hex'),
     attachmentIds:JSON.parse(source.attachment_ids_json),
-    ...(includeText ? {text:source.text} : {}),
+    ...(includeText ? {text:source.text,...(work._planText?{agreedPlan:{text:work._planText,sha256:work.authority.planSha256,authority:'implementation context only'}}:{})} : {}),
   };
 }

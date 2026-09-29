@@ -21,7 +21,7 @@ async function fixture(t) {
 }
 test('settings and room notes are durable, versioned, replayable and included on exact join',async t=>{
   const f=await fixture(t),r=await f.room('Research');
-  assert.deepEqual((await f.good(await f.human('/settings'))).settings,{version:0,displayName:'',backgroundNoticeAcknowledged:false});
+  assert.deepEqual((await f.good(await f.human('/settings'))).settings,{version:0,displayName:'',backgroundNoticeAcknowledged:false,autoCheckUpdates:true});
   const body={operationId:op(),expectedVersion:0,displayName:'  Alex  '};
   const first=await f.good(await f.human('/settings',body)); assert.equal(first.settings.displayName,'Alex');
   assert.deepEqual(await f.good(await f.human('/settings',body)),first);
@@ -43,7 +43,7 @@ test('settings and room notes are durable, versioned, replayable and included on
   assert.equal((await f.human('/settings',{operationId:op(),expectedVersion:3,backgroundNoticeAcknowledged:'yes'})).status,400);
   assert.equal(JSON.parse((await f.broker.store.read(sql=>sql.get('SELECT value FROM metadata WHERE key=?',['threadcrew_settings']))).value).backgroundNoticeAcknowledged,true);
   const diag=await f.good(await f.human('/diagnostics')); assert.equal(diag.product,'ThreadCrew');
-  assert.equal(diag.version,'0.2.1');
+  assert.equal(diag.version,'0.3.0');
   assert.equal(diag.supportedNodeRange,'>=22.16.0 <23 || >=24.0.0 <25');
   assert.equal(diag.checks.find(check=>check.id==='node').status,'ok');
   assert.doesNotMatch(JSON.stringify(diag),/token|credential|nativeSessionId|[A-Z]:[\\/]/i);

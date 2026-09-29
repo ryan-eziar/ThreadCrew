@@ -1,0 +1,53 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { V2Broker } from '../src/v2-broker.mjs';
+
+test('lost context resumes the exact claim, posts once and releases the queued message',async t=>{
+  await mkdir('work',{recursive:true});
+  const runtimeDir=await mkdtemp(join('work','resume-'));
+  const broker=await V2Broker.open({runtimeDir});t.after(()=>broker.close());
+  const room=await broker.createRoom({operationId:'room',name:'Synthetic recovery'});
+  const binding=await broker.join(room.roomId,{agent:'claude',nativeSessionId:'synthetic-original',expectedGate:room.gate});
+  const gate=(await broker.getControl(room.roomId)).room.gate;
+  const first=await broker.sendHuman(room.roomId,{operationId:'first',expectedGate:gate,recipients:['claude'],text:'Current task with exact scope',attachmentIds:[]});
+  const claim=await broker.read(room.roomId,binding.bindingId,{requestId:'read-first'},()=>{});
+  const second=await broker.sendHuman(room.roomId,{operationId:'second',expectedGate:gate,recipients:['claude'],text:'Later steering',attachmentIds:[]});
+  const before=await broker.store.read(sql=>sql.get('SELECT version,claim_id,wait_disposition FROM deliveries WHERE id=?',[first.deliveryIds.claude]));
+  const recovered=await broker.resumeBinding(room.roomId,binding.bindingId);
+  assert.equal(recovered.nativeSessionId,'synthetic-original');assert.equal(recovered.queuedCount,1);
+  assert.equal(recovered.deliveries[0].deliveryId,first.deliveryIds.claude);
+  assert.equal(recovered.deliveries[0].claimId,claim.claimId);
+  assert.equal(recovered.deliveries[0].text,'Current task with exact scope');
+  assert.equal(recovered.deliveries[0].continueTask,true);
+  assert.equal(recovered.latestHumanMessage.text,'Later steering');
+  assert.deepEqual(await broker.resumeBinding(room.roomId,binding.bindingId),recovered);
+  assert.deepEqual(await broker.store.read(sql=>sql.get('SELECT version,claim_id,wait_disposition FROM deliveries WHERE id=?',[first.deliveryIds.claude])),before);
+  const hint=(await broker.getControl(room.roomId)).members.find(m=>m.agent==='claude').recoveryHint;
+  assert.equal(hint.deliveryId,first.deliveryIds.claude);
+  const body={deliveryId:first.deliveryIds.claude,claimId:recovered.deliveries[0].claimId,text:'Exact saved result'};
+  const posted=await broker.postReply(room.roomId,binding.bindingId,body);
+  assert.equal((await broker.postReply(room.roomId,binding.bindingId,body)).replyId,posted.replyId);
+  assert.equal((await broker.resumeBinding(room.roomId,binding.bindingId)).pendingCount,0);
+  const next=await broker.read(room.roomId,binding.bindingId,{requestId:'read-second'},()=>{});
+  assert.equal(next.deliveryId,second.deliveryIds.claude);
+  await broker.stop(room.roomId,{operationId:'stop',expectedGate:gate});
+  const stopped=await broker.resumeBinding(room.roomId,binding.bindingId);
+  assert.equal(stopped.deliveries[0].canReply,true);assert.equal(stopped.deliveries[0].continueTask,false);
+  assert.equal(stopped.roomState,'stopped');
+  const other=await broker.createRoom({operationId:'other',name:'Other'});
+  await assert.rejects(broker.resumeBinding(other.roomId,binding.bindingId),e=>e.code==='BINDING_INVALID');
+});
+
+test('large recovery text is complete through verified file references within the HTTP budget',async t=>{
+  await mkdir('work',{recursive:true});const broker=await V2Broker.open({runtimeDir:await mkdtemp(join('work','resume-large-'))});t.after(()=>broker.close());
+  const room=await broker.createRoom({operationId:'room',name:'Large synthetic recovery'});
+  const binding=await broker.join(room.roomId,{agent:'claude',nativeSessionId:'synthetic-large',expectedGate:room.gate});
+  const gate=(await broker.getControl(room.roomId)).room.gate,text='Task 🚀\n'.repeat(4000);
+  await broker.sendHuman(room.roomId,{operationId:'source',expectedGate:gate,text,recipients:['claude'],attachmentIds:[]});
+  await broker.read(room.roomId,binding.bindingId,{requestId:'read'},()=>{});
+  const recovery=await broker.resumeBinding(room.roomId,binding.bindingId);
+  assert.ok(Buffer.byteLength(JSON.stringify(recovery))<32768);assert.equal(recovery.deliveries[0].text,null);
+  assert.equal(await readFile(recovery.deliveries[0].fullTextAttachment.path,'utf8'),text);
+});

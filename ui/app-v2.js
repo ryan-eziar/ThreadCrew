@@ -210,6 +210,14 @@
     MEMBER_NOT_READY: t('有成员还不能接收。'), EXCHANGE_ACTIVE: t('已有讨论进行中。'),
     BASE_REPLY_INVALID: t('这两份回复不能用来讨论，请看最新状态。'), ROOM_STOPPED: t('已停止：先发一条新消息。'),
     KICKOFF_MESSAGE: t('开工消息的回复是接单，不用讨论。'),
+    UPDATE_BUSY: t('还有没完成的消息或任务，现在不能更新。'), UPDATE_VERSION_CHANGED: t('这期间又有了更新的版本，请重新检查。'),
+    UPDATE_UNSUPPORTED: t('这份 ThreadCrew 不能自动更新。'), UPDATE_IN_PROGRESS: t('已经在更新了。'),
+    UPDATE_CHECK_FAILED: t('没能连上 GitHub 检查更新。'), UPDATE_CHECKSUM_FAILED: t('下载的文件和校验值对不上，没有安装。'),
+    UPDATE_LOCAL_CHANGES: t('ThreadCrew 的文件在这台电脑上被改动过，更新不会覆盖它们。'),
+    UPDATE_PACKAGE_INVALID: t('版本包不完整或不对，没有安装。'), UPDATE_INSTALL_FAILED: t('安装新版本时出错。'),
+    UPDATE_RESTART_FAILED: t('新版本没能启动。'), UPDATE_ROLLBACK_FAILED: t('新版本没能启动，退回原来的版本也没有完全成功。'),
+    UPDATE_INTERRUPTED: t('更新过程被中断了。'),
+    UPDATE_STATE_UNREADABLE: t('读不到更新记录。'),
     ROOM_ARCHIVED: t('这个群已归档，不能再收发。'), WORK_IN_PROGRESS: t('本群已有进行中的任务。'),
     WORK_MUST_BE_STOPPED_FIRST: t('先停止本群，才能解除这项任务。'), WORK_NOT_ACTIVE: t('这项任务已经不在进行中。'),
     DUPLICATE_ACK_REQUIRED: t('需要先确认可能重复。'), ATTACHMENT_CHANGED: t('附件被改动过，已停止读取。'),
@@ -336,6 +344,19 @@
     // The command sits on a line of its own, so no punctuation around it can end up in the shell.
     return t('请重新连接群「{0}」（room: {1}）。先读 {2}。然后核对你当前原生会话的 ID 是否为 {3}：不是就停下并告诉我，不要拿这个 ID 冒充。核对无误后，在 --session 后面填你的会话 ID，运行下面这行：\n{4}\n再按协议重新开始收消息。如果提示 GATE_CHANGED 或 BINDING_CHANGED，请让我重新复制。',
       hint.roomName, hint.roomId, hint.protocolPath || 'docs/AGENT_PROTOCOL.md', hint.expectedNativeSessionId, cmd);
+  }
+
+  // For a seated member that lost track of what it owes (after compacting its context, say): the
+  // broker's recoveryHint exists only while that seat has an exact unanswered delivery. The line runs
+  // the read-only resume helper for that exact binding, which lists what is still unanswered; the
+  // agent checks its own session ID first. Nothing is sent or answered on its behalf.
+  function resumeLine(m, roomName) {
+    const hint = m.recoveryHint;
+    const quote = (p) => `"${p}"`;
+    const cmd = [`node ${quote(hint.helperPath)} resume`, `--room ${hint.roomId}`, `--as ${m.agent}`, `--binding ${hint.bindingId}`,
+      hint.runtimeDir ? `--runtime-dir ${quote(hint.runtimeDir)}` : null].filter(Boolean).join(' ');
+    return t('群「{0}」（room: {1}）里还有发给你的消息没有回复。先核对你当前原生会话的 ID 是否为 {2}：不是就停下并告诉我，不要拿这个 ID 冒充。核对无误后运行下面这行，它会列出还没回复的消息：\n{3}\n然后按协议逐条回复。',
+      roomName, hint.roomId, hint.nativeSessionId, cmd);
   }
 
   function memberBlockText(m, short, due = false) {
@@ -467,6 +488,10 @@
     roomEnteredAt: 0,          // when the open room was entered (roomFresh)
     roomLiveAt: 0,             // when the open room's stream last went live (roomFresh)
     offlineTimer: null,        // re-render when a live drop's grace period ends
+    updates: null,             // the broker's UpdateState (GET /updates), when it can update
+    updateChecking: false,     // this window's explicit check is in flight
+    updateFollow: null,        // an install this window follows: { operationId, version, phase, own, lost, errorCode, polling }
+    updateBox: null,           // the Updates section of an open Settings dialog
   };
   let catalogStream = null;
   let roomStream = null;
@@ -1921,8 +1946,9 @@
   }
 
   // One small dialog: the name Codex and Claude call you by, then what this is, its version,
-  // author, license and link, a three-step start, and the safe diagnostics for a bug report.
-  function openSettings() {
+  // author, license and link, a three-step start, and the safe diagnostics for a bug report; then
+  // updates and quitting where the broker offers them. `section` 'updates' opens it there.
+  function openSettings(section) {
     if (document.querySelector('.modal')) return;
     const input = h('input', { type: 'text', value: (st.settings && st.settings.displayName) || '', placeholder: t('你'), 'aria-label': t('你的显示名') });
     const status = h('span', { class: 'settings-status', 'aria-live': 'polite' });
@@ -1960,14 +1986,25 @@
           h('li', null, t('把进群口令分别贴到你要用的 Claude Code 和 Codex 会话里。')),
           h('li', null, t('发消息先讨论；要它们动手改，直接说明或点「开工」。'))),
         h('button', { type: 'button', class: 'btn', onclick: copyDiagnostics }, icon('copy', 14), t('复制诊断信息'))),
+      UPDATES_SUPPORTED ? updateSection() : null,
       EXIT_SUPPORTED ? h('section', { class: 'settings-sec' },
         h('div', { class: 'settings-label' }, t('退出')),
         h('p', { class: 'settings-hint' }, t('关掉窗口时 ThreadCrew 会在后台继续运行。要完全停止它（所有群），用退出。')),
-        h('div', null, h('button', { type: 'button', class: 'btn danger', onclick: () => { dispose(); askQuit(); } }, icon('power', 14), t('退出 ThreadCrew…')))) : null);
+        h('div', null, h('button', { type: 'button', class: 'btn danger', onclick: () => { close(); askQuit(); } }, icon('power', 14), t('退出 ThreadCrew…')))) : null);
     let dispose = null;
-    dispose = openModal({ title: t('设置与关于'), body, onCancel: () => dispose(), focus: input,
-      actions: [h('button', { type: 'button', class: 'secondary', onclick: () => dispose() }, t('关闭'))] });
+    const close = () => { st.updateBox = null; settingsClose = null; dispose(); };
+    dispose = openModal({ title: t('设置与关于'), body, onCancel: close, focus: input,
+      actions: [h('button', { type: 'button', class: 'secondary', onclick: close }, t('关闭'))] });
+    settingsClose = close;
     loadDiagnostics().then((d) => { if (d && d.version) version.textContent = ` v${d.version}`; });
+    if (UPDATES_SUPPORTED) {
+      loadUpdates();
+      if (section === 'updates' && st.updateBox) {
+        st.updateBox.scrollIntoView({ block: 'nearest' });
+        const go = st.updateBox.querySelector('.update-go') || st.updateBox.querySelector('button');
+        if (go) go.focus();
+      }
+    }
   }
 
   // ---- Quitting ThreadCrew --------------------------------------------------------------------------
@@ -2178,6 +2215,374 @@
       (r) => { if (r && r.settings) st.settings = r.settings; }).then((res) => { if (res && !res.ok) loadSettings(); });
   }
 
+  // ---- Updates ----------------------------------------------------------------------------------------
+  // Only checking is automatic: the broker asks GitHub for the stable releases of ryan-eziar/ThreadCrew
+  // at start and every six hours while autoCheckUpdates is on. Installing is always a click here, and the
+  // broker decides whether it may: not while anything is pending, not over a Git checkout or changed
+  // files. What the window shows comes from the broker's UpdateState alone. While ThreadCrew restarts, a
+  // lost connection means "restarting", never "updated": the new service reports the outcome it saved,
+  // and the window that reaches it shows that once. Offered only where the broker says it can
+  // (capabilities.updates).
+  const UPDATES_SUPPORTED = capabilities.updates === true;
+  const INSTALL_ACTIVE = ['downloading', 'verifying', 'stopping', 'installing', 'restarting'];
+  const INSTALL_DONE = ['completed', 'failed', 'rolled_back'];
+  // Failures after which the running version may be the old one or the new one.
+  const UNCERTAIN_UPDATE = ['UPDATE_ROLLBACK_FAILED', 'UPDATE_INTERRUPTED'];
+  const INSTALL_STEPS = [['downloading', t('下载')], ['verifying', t('校验')], ['stopping', t('停止服务')], ['installing', t('安装')], ['restarting', t('重新启动')]];
+  const UPDATE_ACK_KEY = 'agentchat.update.ack';     // the install outcome this browser acknowledged (its operation ID)
+  const UPDATE_LATER_KEY = 'agentchat.update.later'; // the release this browser said "later" to
+  const RELEASE_NOTES_MAX = 4000;
+  const updateErrorText = (code) => (code ? errorText(code) : t('原因不明。'));
+  let settingsClose = null; // closes an open Settings dialog before the update confirmation opens
+
+  // The notice bar's update line: an install's outcome first (once, until acknowledged), then a release
+  // that can be installed (until "later" for that version). Pure over its inputs, for the tests.
+  function updateBanner(u, ackedId, laterVersion) {
+    if (!u) return null;
+    const job = u.install;
+    if (job && INSTALL_DONE.includes(job.state) && ackedId !== job.operationId) return { kind: job.state, job };
+    if (job && INSTALL_ACTIVE.includes(job.state)) return null;
+    if (u.checkState === 'available' && u.latestVersion && laterVersion !== u.latestVersion) return { kind: 'available', version: u.latestVersion };
+    return null;
+  }
+
+  function updateNotice() {
+    if (!UPDATES_SUPPORTED || exiting() || st.updateFollow) return null;
+    const u = st.updates;
+    const b = updateBanner(u, store.get(UPDATE_ACK_KEY), store.get(UPDATE_LATER_KEY));
+    if (!b) return null;
+    if (b.kind === 'available') {
+      return { tone: 'info', content: [t('ThreadCrew v{0} 可以更新了。', b.version), ' ', link(t('查看'), () => openSettings('updates')), ' · ',
+        link(t('以后再说'), () => { store.set(UPDATE_LATER_KEY, b.version); render(); })] };
+    }
+    const ack = link(t('知道了'), () => { store.set(UPDATE_ACK_KEY, b.job.operationId); render(); });
+    if (b.kind === 'completed') {
+      const notes = u.releaseUrl && u.latestVersion === b.job.version
+        ? [h('a', { href: u.releaseUrl, target: '_blank', rel: 'noopener noreferrer', class: 'link' }, t('看看有什么新内容')), ' · '] : [];
+      return { tone: 'info', content: [t('ThreadCrew 已更新到 v{0}。', b.job.version), ' ', ...notes, ack] };
+    }
+    const why = b.kind === 'rolled_back' ? t('新版本没能正常启动，已退回 v{0}，群和记录都在。', u.installedVersion)
+      : UNCERTAIN_UPDATE.includes(b.job.errorCode) ? t('{0} 现在运行的是 v{1}。如果用起来不对，从快捷方式重新打开 ThreadCrew，启动器会检查；不要删除它的运行数据。', updateErrorText(b.job.errorCode), u.installedVersion)
+      : t('{0} 现在仍是 v{1}，群和记录都在。', updateErrorText(b.job.errorCode), u.installedVersion);
+    return { tone: 'warn', content: [t('更新到 v{0} 没有完成。', b.job.version), ' ', why, ' ', ack] };
+  }
+
+  let updatesReadAt = 0;
+  async function loadUpdates() {
+    if (!UPDATES_SUPPORTED) return;
+    const res = await src.updates();
+    if (res.ok && res.result && res.result.updates) { updatesReadAt = Date.now(); applyUpdates(res.result.updates); }
+  }
+
+  // The broker's own first check starts a moment after it does, so a page that loaded first reads
+  // "idle". Follow that first check with a few cached reads until it settles (about half a minute at
+  // most); nothing here asks GitHub, and nothing is read when automatic checks are off.
+  const FIRST_CHECK_WAITS = [3000, 5000, 8000, 15000];
+  async function followFirstCheck(read = loadUpdates, wait = sleep) {
+    for (const ms of FIRST_CHECK_WAITS) {
+      const u = st.updates;
+      if (!u || u.autoCheckUpdates !== true || !['idle', 'checking'].includes(u.checkState)) return;
+      await wait(ms);
+      await read();
+    }
+  }
+
+  // A window left open for hours reads the cached state again when it comes back into view, at
+  // most every ten minutes, so the six-hourly check's result reaches it.
+  function refreshUpdatesIfStale() {
+    if (UPDATES_SUPPORTED && !st.updateFollow && !exiting() && Date.now() - updatesReadAt > 10 * 60 * 1000) loadUpdates();
+  }
+
+  // A newer UpdateState from any answer. An install running in the service is followed by every open
+  // window, since all of them lose the service while it restarts.
+  function applyUpdates(u) {
+    st.updates = u;
+    const job = u.install;
+    if (job && INSTALL_ACTIVE.includes(job.state) && !st.updateFollow) {
+      st.updateFollow = { operationId: job.operationId, version: job.version, phase: job.state, own: false, lost: false, errorCode: null, polling: false };
+      renderUpdateScreen();
+      pollInstall(st.updateFollow);
+    }
+    fillUpdateBox();
+    render();
+  }
+
+  async function checkUpdates() {
+    if (st.updateChecking) return;
+    st.updateChecking = true;
+    fillUpdateBox();
+    const res = await src.updatesCheck();
+    st.updateChecking = false;
+    if (res.ok && res.result && res.result.updates) applyUpdates(res.result.updates);
+    else { fillUpdateBox(); flash(t('没能检查更新：{0}', updateErrorText(res.error && res.error.code)), 'warn'); }
+  }
+
+  function setAutoCheck(on) {
+    if (st.settingsOk !== true) return;
+    runOp('settings-updates', '/settings', { operationId: uuid(), expectedVersion: st.settings.version, autoCheckUpdates: on },
+      (r) => { if (r && r.settings) st.settings = r.settings; })
+      .then((res) => { if (res && !res.ok) loadSettings(); loadUpdates(); });
+  }
+
+  // The Updates part of Settings, refilled in place while the dialog is open.
+  function updateSection() {
+    st.updateBox = h('section', { class: 'settings-sec update-sec', 'aria-live': 'polite' });
+    fillUpdateBox();
+    return st.updateBox;
+  }
+
+  function fillUpdateBox() {
+    const box = st.updateBox;
+    if (!box) return;
+    const u = st.updates;
+    const parts = [h('div', { class: 'settings-label' }, t('更新'))];
+    if (!u) { fill(box, ...parts, h('p', { class: 'settings-hint' }, t('正在读取…'))); return; }
+    const checking = st.updateChecking || u.checkState === 'checking';
+    const running = Boolean(u.install && INSTALL_ACTIVE.includes(u.install.state));
+    parts.push(h('p', { class: 'update-status' }, checking ? [h('span', { class: 'spinner', 'aria-hidden': 'true' }), ' ', t('正在检查…')]
+      : u.checkState === 'available' ? t('有新版本 v{0}，你现在用的是 v{1}。', u.latestVersion, u.installedVersion)
+      : u.checkState === 'current' ? t('已是最新版本（v{0}）。', u.installedVersion)
+      : u.checkState === 'error' ? t('没能检查更新：{0}', updateErrorText(u.errorCode))
+      : t('现在用的是 v{0}，还没检查过更新。', u.installedVersion)));
+    if (u.checkedAt) parts.push(h('p', { class: 'settings-hint' }, t('上次检查：{0}', fmtTime(u.checkedAt))));
+    const actions = [];
+    if (u.checkState === 'available' && u.installSupported) {
+      actions.push(h('button', { type: 'button', class: 'primary update-go', 'data-key': 'go', disabled: running,
+        onclick: () => { if (settingsClose) settingsClose(); askUpdate(); } }, t('更新到 v{0}…', u.latestVersion)));
+    }
+    actions.push(h('button', { type: 'button', class: 'btn', 'data-key': 'check', disabled: checking || running, onclick: checkUpdates }, t('立即检查')));
+    if (u.checkState === 'available' && u.releaseUrl) actions.push(h('a', { class: 'btn', 'data-key': 'notes', href: u.releaseUrl, target: '_blank', rel: 'noopener noreferrer' }, t('版本说明')));
+    parts.push(h('div', { class: 'update-actions' }, actions));
+    if (u.checkState === 'available' && !u.installSupported) parts.push(...unsupportedLines(u.installUnsupportedReason));
+    parts.push(h('label', { class: 'settings-check' },
+      h('input', { type: 'checkbox', 'data-key': 'auto', checked: u.autoCheckUpdates === true, disabled: st.settingsOk !== true || st.ops.has('settings-updates'),
+        onchange: (e) => setAutoCheck(e.target.checked) }), t('自动检查更新')));
+    parts.push(h('p', { class: 'settings-hint' }, t('开着时，ThreadCrew 启动时和每 6 小时向 GitHub 查一次正式版本，只查版本号，不发送你的消息或文件。安装一定要你点。')));
+    // Refilled whenever the state arrives: keep the keyboard focus on the same control.
+    const focusKey = box.contains(document.activeElement) && document.activeElement.dataset ? document.activeElement.dataset.key : null;
+    fill(box, ...parts);
+    const again = focusKey && box.querySelector(`[data-key="${focusKey}"]`);
+    if (again && !again.disabled) again.focus();
+  }
+
+  // Why this copy can't install by itself, and what to do instead. A clean official Git clone on main
+  // updates like a ZIP install; one with local changes, commits, another branch or remote does not.
+  function unsupportedLines(reason) {
+    const text = reason === 'GIT_WORKTREE_UNSAFE'
+      ? t('这份 ThreadCrew 是用 Git 装的，但里面有本地改动、本地提交，或者不在官方仓库的 main 分支上。为了不覆盖你的东西，这里不自动更新。请先用 Git 自己处理，比如提交或还原改动后运行 git pull --ff-only，再退出 ThreadCrew，从快捷方式打开。')
+      : reason === 'UNSUPPORTED_PLATFORM' ? t('自动安装目前只支持 Windows。请从版本页面下载新版本。')
+      : reason === 'UNMANAGED_INSTALL' ? t('这份 ThreadCrew 不是用安装包或官方 Git 仓库装的，不能自己更新。请从版本页面下载新版本。')
+      : t('这份 ThreadCrew 不能自动更新（{0}）。请从版本页面下载新版本。', reason || '—');
+    return [h('p', { class: 'settings-hint' }, text)];
+  }
+
+  // What is still pending, from the broker's update preview: its busy rooms, else the Quit counts. The
+  // broker refuses a busy update anyway and checks again right before it stops.
+  const busyCounts = (preview) => QUIT_COUNTS.filter(([k]) => preview && preview.counts && preview.counts[k] > 0);
+  const isBusy = (preview) => Boolean(preview && ((Array.isArray(preview.rooms) && preview.rooms.length) || busyCounts(preview).length));
+  // A busy room and what is pending in it. The preview's `agents` are the room's members, not who is
+  // busy, so no one is named.
+  function busyRoomText(r) {
+    const parts = [r.unresolvedDeliveries ? t('{0} 份等回复', r.unresolvedDeliveries) : null,
+      r.queuedDeliveries ? t('{0} 份排队', r.queuedDeliveries) : null,
+      r.pendingWorkRequests ? t('{0} 个协作请求没完成', r.pendingWorkRequests) : null,
+      r.activeWork ? t('有进行中的协作任务') : null].filter(Boolean);
+    return [t('「{0}」', r.roomName || r.roomId), ...(parts.length ? parts : [t('还有没完成的事')])].join(' · ');
+  }
+  function busyList(preview) {
+    if (preview && Array.isArray(preview.rooms) && preview.rooms.length) return h('ul', { class: 'quit-counts' }, preview.rooms.map((r) => h('li', null, busyRoomText(r))));
+    const counts = busyCounts(preview);
+    return counts.length ? h('ul', { class: 'quit-counts' }, counts.map(([k, text]) => h('li', null, text(preview.counts[k])))) : null;
+  }
+
+  // The confirmation: what restarting means, what is still pending, what only this window would lose,
+  // and the release's own notes (as plain text).
+  async function askUpdate() {
+    const u = st.updates;
+    if (!UPDATES_SUPPORTED || !u || u.checkState !== 'available' || !u.installSupported || st.updateFollow || exiting() || document.querySelector('.modal')) return;
+    const version = u.latestVersion;
+    const body = h('div', { class: 'modal-body quit-body' }, h('p', null, h('span', { class: 'spinner', 'aria-hidden': 'true' }), ' ', t('正在读取各群的情况…')));
+    let closed = false;
+    let dispose = null;
+    const close = () => { if (!closed) { closed = true; dispose(); } };
+    const cancelBtn = h('button', { type: 'button', class: 'secondary', onclick: close }, t('取消'));
+    const goBtn = h('button', { type: 'button', class: 'primary', disabled: true }, t('更新并重新启动'));
+    dispose = openModal({ title: t('更新到 v{0}？', version), role: 'alertdialog', body, onCancel: close, focus: cancelBtn, actions: [cancelBtn, goBtn] });
+    const res = await src.updatesPreview();
+    if (closed) return;
+    if (res.ok && res.result.instanceId !== boot.instanceId) {
+      fill(body, h('p', { class: 'quit-warn' }, t('ThreadCrew 在这个窗口打开之后重启过。请先重新载入窗口。')));
+      fill(goBtn, t('重新载入'));
+      goBtn.disabled = false;
+      goBtn.onclick = () => location.reload();
+      return;
+    }
+    fill(body, ...updateLines(u, res.ok ? res.result : null, res.ok ? null : res.error.code));
+    goBtn.disabled = isBusy(res.ok ? res.result : null);
+    goBtn.onclick = () => { close(); requestInstall(version); };
+  }
+
+  function updateLines(u, preview, previewError) {
+    const lines = [h('p', null, t('ThreadCrew 会停下来安装新版本，再自己重新启动，所有群会暂停一会儿。已保存的消息和任务记录都会保留，Codex 和 Claude 自己的会话也不会被关掉。'))];
+    if (u.installKind === 'git') lines.push(h('p', null, t('这份是官方 Git 仓库的副本：会快进到 v{0} 的正式版本标签，并核对文件和发布清单一致。', u.latestVersion)));
+    else if (u.installKind === 'zip') lines.push(h('p', null, t('只替换 ThreadCrew 的程序文件，先校验下载的版本包；你的群、记录、附件和设置都不动，旧版本会留一份备份。')));
+    if (isBusy(preview)) {
+      lines.push(h('p', { class: 'quit-warn' }, t('现在还有没完成的，暂时不能更新：')));
+      lines.push(busyList(preview));
+      lines.push(h('p', { class: 'quit-hint' }, t('等它们完成，或者停止相关的群，再来更新。这是 {0} 的情况。', fmtTime(preview.capturedAt))));
+    } else if (previewError) {
+      lines.push(h('p', { class: 'quit-warn' }, t('没能读取各群的情况（{0}）。可以继续，ThreadCrew 开始前会再检查一次。', previewError)));
+    }
+    const local = unsentHere();
+    if (local.rooms) lines.push(h('p', { class: 'quit-warn' }, t('这个窗口里有没发出的文字（{0} 个群），重新启动后会丢失。', local.rooms)));
+    if (local.files) lines.push(h('p', { class: 'quit-warn' }, t('还有 {0} 个已添加、没发出的附件，重新启动后要再添加。', local.files)));
+    const notes = (u.releaseNotes || '').trim();
+    if (notes) {
+      const cut = [...notes].length > RELEASE_NOTES_MAX ? `${[...notes].slice(0, RELEASE_NOTES_MAX).join('')}…` : notes;
+      lines.push(h('details', { class: 'update-notes' }, h('summary', null, t('这个版本的说明')), h('div', { class: 'update-notes-text' }, cut),
+        u.releaseUrl ? h('a', { href: u.releaseUrl, target: '_blank', rel: 'noopener noreferrer', class: 'link' }, t('在 GitHub 上看完整说明')) : null));
+    }
+    lines.push(h('p', { class: 'quit-hint' }, t('装好后 ThreadCrew 会自己打开新窗口（地址可能会变）。如果没有打开，就从 ThreadCrew 的快捷方式打开。')));
+    return lines;
+  }
+
+  function requestInstall(version) {
+    st.updateFollow = { operationId: uuid(), version, phase: 'requesting', own: true, lost: false, errorCode: null, polling: false };
+    sendInstall(st.updateFollow);
+  }
+
+  async function sendInstall(f) {
+    f.phase = 'requesting';
+    renderUpdateScreen();
+    const res = await src.updatesInstall({ operationId: f.operationId, expectedVersion: f.version });
+    if (st.updateFollow !== f) return;
+    if (res.ok && res.result && res.result.updates) {
+      st.updates = res.result.updates;
+      const job = st.updates.install;
+      if (job && job.operationId === f.operationId) { f.phase = job.state; f.errorCode = job.errorCode || null; }
+      renderUpdateScreen();
+      pollInstall(f);
+      return;
+    }
+    const code = res.error && res.error.code;
+    // Another install holds the service (another window's): follow that one openly.
+    if (code === 'UPDATE_IN_PROGRESS') { f.own = false; pollInstall(f); return; }
+    // No answer: whether it arrived is in the install status.
+    if (res.error && res.error.outcome === 'unknown') { pollInstall(f); return; }
+    st.updateFollow = null;
+    renderUpdateScreen();
+    loadUpdates();
+    showUpdateRefusal(res.error || { code: 'NETWORK' });
+  }
+
+  // A refusal before anything started: what it was, and for a busy service what is still pending.
+  function showUpdateRefusal(error) {
+    if (document.querySelector('.modal')) { flash(errorText(error.code), 'warn'); return; }
+    const preview = error.details && (error.details.counts || error.details.rooms) ? error.details : null;
+    const body = h('div', { class: 'modal-body quit-body' }, h('p', null, errorText(error.code)),
+      isBusy(preview) ? busyList(preview) : null,
+      error.code === 'UPDATE_BUSY' ? h('p', { class: 'quit-hint' }, t('等它们完成，或者停止相关的群，再来更新。')) : null);
+    let dispose = null;
+    const ok = h('button', { type: 'button', class: 'primary', onclick: () => dispose() }, t('知道了'));
+    dispose = openModal({ title: t('没有开始更新'), role: 'alertdialog', body, onCancel: () => dispose(), focus: ok, actions: [ok] });
+  }
+
+  // Every two seconds while an install runs and this window is open. No answer while it stops, installs
+  // or restarts is the restart itself: "restarting", never "updated". A new service that no longer
+  // accepts this page's token is back: reloading shows the outcome it saved.
+  async function pollInstall(f) {
+    if (f.polling) return;
+    f.polling = true;
+    let misses = 0;
+    try {
+      while (st.updateFollow === f && (f.phase === 'requesting' || INSTALL_ACTIVE.includes(f.phase))) {
+        await sleep(2000);
+        if (st.updateFollow !== f) return;
+        const res = await src.updatesInstallStatus();
+        if (st.updateFollow !== f) return;
+        if (res.ok && res.result && res.result.updates) {
+          misses = 0;
+          f.lost = false;
+          st.updates = res.result.updates;
+          const job = st.updates.install;
+          if (job && job.operationId !== f.operationId && INSTALL_ACTIVE.includes(job.state)) Object.assign(f, { operationId: job.operationId, version: job.version, own: false });
+          if (job && job.operationId === f.operationId) { f.phase = job.state; f.errorCode = job.errorCode || null; }
+          else f.phase = f.phase === 'requesting' && f.own ? 'not_started' : 'unknown';
+          renderUpdateScreen();
+          continue;
+        }
+        const code = res.error && res.error.code;
+        if (code === 'AUTH_REQUIRED' || code === 'FORBIDDEN') { f.phase = 'restarted'; break; }
+        misses += 1;
+        if (misses >= 2 && !f.lost) { f.lost = true; renderUpdateScreen(); }
+        if (misses >= 150) break; // five minutes without an answer: the screen keeps saying what to do
+      }
+    } finally {
+      f.polling = false;
+    }
+    renderUpdateScreen();
+  }
+
+  // What the update screen says in each phase of the install it follows. Pure over f, for the tests.
+  function installView(f) {
+    const other = f.own ? null : t('更新是在另一个窗口发起的。');
+    const reopen = t('如果它没有自己打开新窗口，就从 ThreadCrew 的快捷方式打开。');
+    if (f.phase === 'requesting' || INSTALL_ACTIVE.includes(f.phase)) {
+      const lines = f.lost
+        ? [t('ThreadCrew 正在重新启动，这个窗口暂时连不上它。准备好后它会自己打开新窗口，那时可以关掉这个。'), reopen]
+        : [f.phase === 'requesting' ? t('正在请求更新。') : t('先下载、校验新版本，再停下 ThreadCrew 安装并重新启动。通常一两分钟。')];
+      return { title: t('正在更新到 v{0}…', f.version), busy: true, steps: true, lines: [...lines, other], actions: [] };
+    }
+    switch (f.phase) {
+      case 'completed':
+        return { title: t('已更新到 v{0}', f.version), lines: [t('重新载入这个窗口，就能用新版本。')], actions: [['reload', t('重新载入'), 'primary']] };
+      case 'failed':
+        // After a failed rollback or a lost updater, which version runs isn't known: say what to do.
+        return UNCERTAIN_UPDATE.includes(f.errorCode)
+          ? { title: t('更新没有完成'), lines: [t('错误：{0}', updateErrorText(f.errorCode)), t('如果 ThreadCrew 用起来不对，从快捷方式重新打开它，启动器会检查并安全恢复。不要删除它的运行数据。'), other],
+            actions: [['reload', t('重新载入'), 'primary']] }
+          : { title: t('更新没有完成'), lines: [t('错误：{0}', updateErrorText(f.errorCode)), t('ThreadCrew 还在用原来的版本，群和记录都在。'), other], actions: [['back', t('返回'), 'primary']] };
+      case 'rolled_back':
+        return { title: t('新版本没能启动，已退回原来的版本'), lines: [f.errorCode ? t('错误：{0}', updateErrorText(f.errorCode)) : null, t('群和记录都在。'), other],
+          actions: [['reload', t('重新载入'), 'primary']] };
+      case 'restarted':
+        return { title: t('ThreadCrew 已经重新启动'), lines: [t('重新载入这个窗口，就能看到更新的结果。'), t('如果已经打开了新窗口，也可以直接关掉这个。')],
+          actions: [['reload', t('重新载入'), 'primary']] };
+      case 'not_started':
+        return { title: t('更新请求没有送到'), lines: [t('ThreadCrew 没有收到这个窗口的更新请求，什么都没有变。可以再试一次，或者返回。')],
+          actions: [['back', t('返回'), 'secondary'], ['retry', t('再试一次'), 'primary']] };
+      default:
+        return { title: t('没能确认更新的结果'), lines: [t('这个窗口没能确认更新有没有完成。'), reopen], actions: [['reload', t('重新载入'), 'primary']] };
+    }
+  }
+
+  function renderUpdateScreen() {
+    let screen = $('update-screen');
+    const f = st.updateFollow;
+    if (!f) {
+      if (screen) screen.remove();
+      if (!st.exit) document.body.classList.remove('is-exiting');
+      return;
+    }
+    if (!screen) { screen = h('div', { id: 'update-screen', class: 'exit-screen', role: 'alertdialog', 'aria-modal': 'true', 'aria-live': 'polite' }); document.body.append(screen); }
+    document.body.classList.add('is-exiting');
+    const v = installView(f);
+    const handlers = {
+      back: () => { st.updateFollow = null; renderUpdateScreen(); loadUpdates(); resyncCatalog(); if (view()) resyncRoom(view()); },
+      reload: () => location.reload(),
+      retry: () => sendInstall(f),
+    };
+    const now = INSTALL_STEPS.findIndex(([k]) => k === f.phase);
+    fill(screen, h('div', { class: 'exit-card' },
+      h('div', { class: 'exit-mark' }, brandMark()),
+      h('div', { class: 'exit-title' }, v.busy ? h('span', { class: 'spinner', 'aria-hidden': 'true' }) : null, v.title),
+      v.steps ? h('ol', { class: 'update-steps' }, INSTALL_STEPS.map(([k, label], i) =>
+        h('li', { class: i < now ? 'is-done' : i === now ? 'is-now' : null, 'aria-current': i === now ? 'step' : null }, label))) : null,
+      v.lines.filter(Boolean).map((line) => h('p', null, line)),
+      v.actions.length ? h('div', { class: 'exit-actions' }, v.actions.map(([key, label, kind]) =>
+        h('button', { type: 'button', class: kind, onclick: handlers[key] }, label))) : null));
+  }
+
   async function createRoom() {
     const name = ((await askText(t('新群聊的名字（1–80 个字）'), '')) || '').trim();
     if (!name) return;
@@ -2232,17 +2637,22 @@
 
   // What the user pastes into a native session to bring it into this room: the exact join command
   // (paths from the broker's hint, quoted) and the manual to read first. Written in the user's voice.
+  // An empty seat's line also carries that seat's own join version, so the other agent joining first
+  // does not void it; a broker without one keeps the strict room gate alone.
   function joinLine(m) {
     const c = control();
     const hint = m.joinHint || {};
     const gate = hint.expectedGate || c.room.gate;
     const expected = hint.expectedBindingId && m.binding ? hint.expectedBindingId : 'null';
+    const joinVersion = expected === 'null' && Number.isSafeInteger(hint.expectedJoinVersion) && hint.expectedJoinVersion > 0
+      ? hint.expectedJoinVersion : null;
     const quote = (p) => `"${p}"`;
     const cmd = [`node ${hint.helperPath ? quote(hint.helperPath) : 'chat.mjs'} join`, `--room ${c.room.id}`, `--as ${m.agent}`,
       `--session ${t('<你当前原生会话的 ID>')}`, `--expected-binding ${expected}`, `--gate-segment ${gate.segmentId}`,
-      `--gate-version ${gate.version}`, hint.runtimeDir ? `--runtime-dir ${quote(hint.runtimeDir)}` : null].filter(Boolean).join(' ');
+      `--gate-version ${gate.version}`, joinVersion ? `--join-version ${joinVersion}` : null,
+      hint.runtimeDir ? `--runtime-dir ${quote(hint.runtimeDir)}` : null].filter(Boolean).join(' ');
     const where = hint.helperPath ? '' : t('在 {0} ', hint.projectDir || t('ThreadCrew 的安装目录'));
-    return t('请进群「{0}」（room: {1}）：{2}运行 {3}。进群后先读 {4}，按里面的说明收发消息。如果提示 GATE_CHANGED，请让我重新复制这句。',
+    return t('请进群「{0}」（room: {1}）：{2}运行 {3}。进群后先读 {4}，按里面的说明收发消息。如果提示 GATE_CHANGED 或 JOIN_CHANGED，请让我重新复制这句。',
       c.room.name, c.room.id, where, cmd, hint.protocolPath || 'docs/AGENT_PROTOCOL.md');
   }
 
@@ -2455,6 +2865,12 @@
     const waiting = d.waitDisposition === 'waiting' && d.waitingSince && ['awaiting_reply', 'uncertain'].includes(d.state);
     const minutes = waiting ? minutesSince(d.waitingSince) : null;
     if (d.state === 'awaiting_reply' && minutes >= 1) parts.push(t('· {0} 分钟', minutes));
+    // A long wait on an awaiting reply offers the resume line first (the agent may have lost track of
+    // it), next to giving up the wait. Shown by the same threshold; nothing happens by itself.
+    if (d.state === 'awaiting_reply' && waiting && minutes >= ABANDON_SHOW_MIN) {
+      const m = control() && control().members.find((x) => x.agent === d.agent);
+      if (m && m.binding && m.recoveryHint && !dueNow(m.agent)) parts.push(link(t('复制恢复口令'), () => copyResume(m), { title: t('它没回的消息，让它接着回') }));
+    }
     if (d.actions && d.actions.abandon.enabled && waiting && (d.state === 'uncertain' || minutes >= ABANDON_SHOW_MIN)) {
       if (minutes >= ABANDON_STRESS_MIN) tone = 'warn';
       parts.push(actionState(`abandon:${d.id}`) || link(t('不再等待'), () => abandon(d), { title: t('只释放排队位置，不会停止对方') }));
@@ -2560,14 +2976,35 @@
     }
   }
 
+  // One of Ryan's messages by its ID: a link when this window has it loaded, plain text otherwise.
+  function humanMessageLink(messageId, label) {
+    const v = view();
+    const entry = discussedEntry(null, messageId);
+    return entry && v ? link(label, () => jumpToEntry(v, entry.id), { title: t('跳到原消息') }) : h('span', null, label);
+  }
+
+  // Why a work session exists when Ryan didn't press Kick off: both agents confirmed that his own
+  // message asks them to start once they agree, and on which plan. Null for his own kickoffs.
+  function workAuthority(a, withPlan) {
+    if (!a || a.kind !== 'agent_confirmation') return null;
+    return h('div', { class: 'work-auth' },
+      h('span', null, t('两位都确认了你消息里的开工要求，自动开工。')), ' ',
+      humanMessageLink(a.sourceHumanMessageId, t('查看这条消息')),
+      withPlan && a.planPreview ? h('details', { class: 'work-plan' }, h('summary', null, t('两位确认的方案')), h('div', { class: 'work-plan-text' }, a.planPreview)) : null);
+  }
+
   function renderWork(e) {
     const w = e.work;
     const who = NAMES[w.author] || w.author;
     const late = w.lateReason ? h('span', { class: 'tag muted' }, t('{0} · 未转发', WORK_LATE[w.lateReason] || t('迟到'))) : null;
     const text = w.content ? renderContent(e, w.content, e.id) : null;
     switch (w.eventKind) {
-      case 'started':
-        return h('div', { class: 'work-mark', 'data-id': e.id }, h('span', { class: 'work-badge' }, t('开工')), h('strong', null, snippet(w.content ? w.content.previewText : '', 60)), h('span', { class: 'ts' }, fmtTime(e.at)));
+      case 'started': {
+        const auto = Boolean(w.authority && w.authority.kind === 'agent_confirmation');
+        return h('div', { class: `work-mark${auto ? ' is-auto' : ''}`, 'data-id': e.id },
+          h('span', { class: 'work-badge' }, auto ? t('自动开工') : t('开工')), h('strong', null, snippet(w.content ? w.content.previewText : '', 60)),
+          h('span', { class: 'ts' }, fmtTime(e.at)), auto ? workAuthority(w.authority, false) : null);
+      }
       case 'accepted':
         return h('div', { class: `work-line from-${w.author}`, 'data-id': e.id }, h('strong', { class: `name name-${w.author}` }, who), t(' 已接单'), w.content ? [' · ', h('span', { class: 'muted' }, snippet(w.content.previewText, 80))] : null, h('span', { class: 'ts' }, fmtTime(e.at)));
       case 'progress':
@@ -2889,6 +3326,7 @@
     }
     const body = h('div', { class: 'work-detail' },
       h('p', { class: 'work-goal', title: w.scopeSummary || '' }, w.objective),
+      workAuthority(w.authority, true),
       h('div', { class: `work-state${paused ? ' tone-warn' : ''}` },
         `${COORDINATION[w.coordinationState] || w.coordinationState}${paused && pausedWhat ? t('（{0}用完）', pausedWhat) : ''} · ${timeLeft(w.expiresAt)}`),
       h('ul', { class: 'work-people' }, participants),
@@ -2958,6 +3396,44 @@
       if (await copyText(reconnectLine(m))) flash(t('已复制。请贴回原来的 {0} 会话。', app));
     }, { class: 'btn reconnect-copy' });
   }
+  async function copyResume(m) {
+    const app = m.agent === 'claude' ? 'Claude Code' : 'Codex';
+    if (await copyText(resumeLine(m, control().room.name))) flash(t('已复制。请贴回原来的 {0} 会话，它会接着回复没回的消息。', app));
+  }
+  // One agent confirmed that Ryan's message asks them to start once they agree, and waits for the
+  // other: shown with that message and the plan, since both confirming starts a work session by
+  // itself. An expired confirmation is said once, until dismissed here. Pure text choice in
+  // pendingKickoffView, for the tests.
+  function pendingKickoffView(p) {
+    if (!p) return null;
+    const done = (p.confirmations || []).map((x) => x.agent);
+    const waiting = AGENTS.filter((a) => !done.includes(a));
+    if (p.state === 'waiting_peer') {
+      return { tone: 'info', title: t('{0} 确认可以开工，在等 {1} 确认', done.map((a) => NAMES[a]).join(t('、')), waiting.map((a) => NAMES[a]).join(t('、'))),
+        text: t('两位都确认后，群会自动开工，用标准额度，随时可以停止。不想开工的话，发一条新消息就会取消。') };
+    }
+    if (p.state === 'expired') return { tone: 'off', title: t('开工确认已失效'), text: t('之后又有了新消息，或者群停止了、成员变了，所以没有开工。') };
+    return null;
+  }
+  const kickoffDismissed = new Set(); // expired confirmations dismissed in this window, by plan hash
+  let kickoffCache = { key: '', node: null };
+  function renderPendingKickoff(c) {
+    const p = c.pendingKickoff;
+    const v = pendingKickoffView(p);
+    if (!v || (p.state === 'expired' && kickoffDismissed.has(`${p.sourceHumanMessageId}:${p.planSha256}`))) return null;
+    const key = [c.room.id, p.state, p.sourceHumanMessageId, p.planSha256, ...(p.confirmations || []).map((x) => x.agent)].join('|');
+    if (kickoffCache.key === key) return kickoffCache.node;
+    const node = h('div', { class: `reconnect kickoff-pending tone-${v.tone}`, 'data-kind': 'kickoff', role: 'status' },
+      h('div', { class: 'reconnect-row' },
+        h('span', { class: 'work-badge' }, icon('zap', 12)),
+        h('div', { class: 'reconnect-text' }, h('strong', null, v.title),
+          h('span', null, v.text, ' ', humanMessageLink(p.sourceHumanMessageId, t('查看你的消息'))),
+          p.state === 'waiting_peer' && p.planPreview ? h('details', { class: 'work-plan' }, h('summary', null, t('确认的方案')), h('div', { class: 'work-plan-text' }, p.planPreview)) : null),
+        p.state === 'expired' ? btn(t('知道了'), () => { kickoffDismissed.add(`${p.sourceHumanMessageId}:${p.planSha256}`); render(); }) : null));
+    kickoffCache = { key, node };
+    return node;
+  }
+
   let reconnectCache = { key: '', node: null }; // the same node while nothing changes, so the search box keeps its focus
   function renderReconnect(c) {
     const due = c.members.filter((m) => offlineDue(memberKey(c, m), m, roomFresh()));
@@ -3021,6 +3497,11 @@
       const actions = [];
       if (c.room.lifecycle === 'open') {
         if (due) actions.push(reconnectButton(m));
+        // The hint exists while any reply is owed; offered once the wait is as long as the one that
+        // offers giving up on it, not during every ordinary reply.
+        if (m.binding && m.recoveryHint && !due && minutesSince(m.recoveryHint.waitingSince) >= ABANDON_SHOW_MIN) {
+          actions.push(btn([icon('copy', 14), t('复制恢复口令')], () => copyResume(m), { title: t('它没回的消息，让它接着回') }));
+        }
         actions.push(btn([icon('copy', 14), m.binding ? t('复制换会话的进群口令') : t('复制进群口令')], async () => {
           if (await copyText(joinLine(m))) flash(t('已复制。把它贴到 {0} 的原会话里。', NAMES[m.agent]));
         }));
@@ -3073,7 +3554,7 @@
     const extras = $('room-extras');
     // A popover that was already open is rebuilt on every render; only a newly opened one animates.
     const openKind = extras.firstElementChild ? extras.firstElementChild.dataset.kind : null;
-    const nodes = [renderReconnect(c), renderPanel(c), renderAttention(c), renderWorkPanel(c), searchPanel()].filter(Boolean);
+    const nodes = [renderReconnect(c), renderPendingKickoff(c), renderPanel(c), renderAttention(c), renderWorkPanel(c), searchPanel()].filter(Boolean);
     for (const n of nodes) if (n.dataset.kind === openKind) n.classList.add('steady');
     // Put back only what changed: the search panel is the same node, and re-adding it would take
     // the focus out of its input.
@@ -3757,7 +4238,10 @@
     else if (st.conn.catalog === 'offline') { tone = 'warn'; content = t('连不上 broker，正在重试…'); }
     else if (st.conn.catalog === 'connecting') content = t('正在连接 broker…');
     else if (st.notice) { tone = st.notice.tone; content = st.notice.text; }
-    else content = backgroundNotice();
+    else {
+      const un = updateNotice();
+      if (un) { tone = un.tone; content = un.content; } else content = backgroundNotice();
+    }
     bar.hidden = !content;
     bar.className = `notice tone-${tone}`;
     fill(bar, ...(content ? [].concat(content) : []));
@@ -4054,6 +4538,12 @@
     if (boot.shutdown) { applyShutdown(boot.shutdown, 'event'); return; }
     if (!(await loadCatalog())) { render(); return; }
     loadSettings();
+    // The cached state only: the broker checks by itself when that is switched on.
+    if (UPDATES_SUPPORTED) {
+      loadUpdates().then(() => followFirstCheck());
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshUpdatesIfStale(); });
+      window.addEventListener('focus', refreshUpdatesIfStale);
+    }
     await restorePending();
     st.conn.catalog = 'polling';
     connectCatalog();

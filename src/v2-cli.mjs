@@ -2,16 +2,20 @@ import http from 'node:http';
 import fs from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 const VERSION = 'agent-chat.window.v2';
 const ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/;
 const ROLES = new Set(['codex', 'claude']);
 const COMMANDS = {
-  join: ['room', 'as', 'session', 'label', 'renew', 'reconnect', 'expected-binding', 'gate-segment', 'gate-version'],
+  join: ['room', 'as', 'session', 'label', 'renew', 'reconnect', 'expected-binding', 'gate-segment', 'gate-version', 'join-version'],
   wait: ['room', 'as', 'binding', 'request', 'work', 'scope'],
   read: ['room', 'as', 'binding', 'request', 'batch', 'claim'],
   post: ['room', 'as', 'binding', 'delivery', 'file', 'claim', 'done', 'format', 'attachments-file'],
   status: ['room', 'as', 'binding'],
+  resume: ['room', 'as', 'binding'],
+  'start-context': ['room','as','binding'],
+  'confirm-start': ['room','as','binding','op','source-message','source-sha256','file','pending','plan-sha256','codex-binding','claude-binding','gate-segment','gate-version','authorized'],
   'work-status': ['room', 'as', 'binding', 'work'],
   'work-accept': ['room', 'as', 'binding', 'work', 'op', 'delivery', 'claim', 'file', 'accept'],
   'work-progress': ['room', 'as', 'binding', 'work', 'op', 'file', 'references-file'],
@@ -21,7 +25,7 @@ const COMMANDS = {
   'work-response': ['room', 'as', 'binding', 'work', 'op', 'request', 'claim', 'file', 'attachments-file'],
   'work-state': ['room', 'as', 'binding', 'work', 'op', 'expected-version', 'state', 'file', 'references-file'],
 };
-const BOOLEAN = new Set(['renew', 'reconnect', 'done']);
+const BOOLEAN = new Set(['renew', 'reconnect', 'done', 'authorized', 'pending']);
 const WORK_PATHS = { 'work-accept': 'accept', 'work-progress': 'progress', 'work-request': 'requests',
   'work-checkpoint': 'checkpoint', 'work-received': 'received', 'work-response': 'responses', 'work-state': 'state' };
 function error(code, message) { return Object.assign(new Error(message), { code }); }
@@ -171,7 +175,9 @@ export async function runV2Cli(args, { stdout = text => process.stdout.write(tex
     const expectedGate = { segmentId: validId(flags['gate-segment'], '--gate-segment'), version: positiveInteger(flags['gate-version'], '--gate-version') };
     const result = await requestJson(connection.baseUrl, `${route}/join`, connection.enrollmentToken,
       { agent: role, nativeSessionId, label: flags.label ?? role, renew: flags.renew ?? false,
-        ...(flags.reconnect ? { reconnect: true } : {}), expectedBindingId, expectedGate }, { signal, roomId });
+        ...(flags.reconnect ? { reconnect: true } : {}),
+        ...(flags['join-version'] === undefined ? {} : { expectedJoinVersion: positiveInteger(flags['join-version'], '--join-version') }),
+        expectedBindingId, expectedGate }, { signal, roomId });
     validId(result.bindingId, 'bindingId');
     if (result.agent !== role || result.nativeSessionId !== nativeSessionId || (flags.reconnect && result.bindingId !== expectedBindingId)
       || (result.workspaceId !== undefined && result.workspaceId !== connection.workspaceId)
@@ -187,6 +193,11 @@ export async function runV2Cli(args, { stdout = text => process.stdout.write(tex
       return { state, value: null };
     });
     const { credential, ...safe } = result;
+    if (role === 'codex') {
+      const folder=join(runtime,'recovery-sessions');fs.mkdirSync(folder,{recursive:true,mode:0o700});
+      atomicJson(join(folder,`${createHash('sha256').update(nativeSessionId).digest('hex')}.json`),
+        {schema:1,nativeSessionId,roomId,bindingId:result.bindingId,agent:role,projectDir:resolve(projectDir),runtimeDir:runtime});
+    }
     return print({ ...safe, next: `node chat.mjs ${role === 'claude' ? 'wait' : 'status'} --room ${roomId} --as ${role} --binding ${result.bindingId}` });
   }
   const bindingId = validId(flags.binding, '--binding');
@@ -203,6 +214,8 @@ export async function runV2Cli(args, { stdout = text => process.stdout.write(tex
   }
   const call = (suffix, body, options = {}) => requestJson(state.baseUrl, `${route}/${suffix}`, state.credential, body, { signal, roomId, ...options });
   if (command === 'status') return print(verifyIdentity(await call('status'), state, roomId, { native: true }));
+  if (command === 'resume') return print(verifyIdentity(await call('resume'), state, roomId, { native: true }));
+  if(command==='start-context')return print(await call('start-context'));
   if (command === 'wait') {
     if (role !== 'claude') throw error('INVALID_INPUT', 'Codex uses native push.');
     const scope = flags.scope ?? 'ordinary';
@@ -215,7 +228,27 @@ export async function runV2Cli(args, { stdout = text => process.stdout.write(tex
       if (current.pendingWait && JSON.stringify(current.pendingWait) !== JSON.stringify(proposed)) throw error('ID_CONFLICT', 'Retry the pending wait with its original IDs and scope.');
       current.pendingWait = proposed; return { state: current, value: proposed };
     });
-    const result = await call('wait', body, { wait: true });
+    let result,updateId=null,recoveryDeadline=0;
+    for(;;){
+      let cause;
+      try{result=await call('wait',body,{wait:true});if(result.status!=='DISCONNECTED')break;}
+      catch(e){cause=e;if(!['UPDATE_IN_PROGRESS','CLOSED','CONNECTION_LOST','BROKER_UNAVAILABLE'].includes(e.code)||signal?.aborted)throw e;}
+      let install;try{install=readJson(join(runtime,'update-state.json')).install;}catch{}
+      const activeUpdate=install&&['downloading','verifying','stopping','installing','restarting'].includes(install.state);
+      if(!updateId&&activeUpdate){updateId=install.operationId;recoveryDeadline=Date.now()+120000;}
+      if(!updateId||Date.now()>=recoveryDeadline){if(cause)throw cause;break;}
+      await delay(500,undefined,{signal});
+      try{
+        const next=descriptor(runtime,role);
+        if(next.workspaceId!==state.workspaceId)throw error('FORBIDDEN','Updated broker belongs to a different workspace.');
+        if(next.instanceId!==state.instanceId||next.baseUrl!==state.baseUrl){
+          const bound=await requestJson(next.baseUrl,`${route}/status`,state.credential,undefined,{signal,roomId});
+          verifyIdentity(bound,state,roomId,{native:true});
+          state=withState(runtime,bindingId,current=>{current.instanceId=next.instanceId;current.baseUrl=next.baseUrl;current.batchId=bound.batchId??null;return {state:current,value:current};});
+        }
+      }catch(e){if(!['BROKER_UNAVAILABLE','CONNECTION_LOST','CLOSED'].includes(e.code))throw e;}
+      // Same scope, request and binding; no lease extension or model wake.
+    }
     withState(runtime, bindingId, current => {
       if (current.pendingWait?.requestId === body.requestId) current.pendingWait = null;
       if (['NEW', 'NOTICE_PENDING'].includes(result.status)) { current.batchId = result.batchId; current.notificationId = result.notificationId; }
@@ -273,6 +306,34 @@ export async function runV2Cli(args, { stdout = text => process.stdout.write(tex
       return { state: current, value: null };
     });
     return print(result);
+  }
+  if(command==='confirm-start'){
+    if(flags.authorized!==true||Boolean(flags.file)===Boolean(flags.pending))throw error('INVALID_INPUT','Read the full human message and use exactly one of --file or --pending with --authorized.');
+    const opKey=`confirm-start:${validId(flags['source-message'],'--source-message')}`;
+    const saved=withState(runtime,bindingId,current=>({value:current.operations[flags.op??current.pendingOperations[opKey]]??null}));
+    let body;
+    if(saved){
+      body=saved.body;
+      const matches=(flag,value)=>flags[flag]===undefined||String(flags[flag])===String(value);
+      if(flags.file&&textFile(flags.file)!==body.planText||!matches('source-sha256',body.sourceTextSha256)||!matches('plan-sha256',body.planSha256)
+        ||!matches('codex-binding',body.expectedBindings.codex)||!matches('claude-binding',body.expectedBindings.claude)
+        ||!matches('gate-segment',body.expectedGate.segmentId)||!matches('gate-version',body.expectedGate.version))throw error('ID_CONFLICT','Retry the saved confirmation with its original plan and IDs.');
+    }else{
+    const context=await call('start-context');
+    if(context.sourceHumanMessage?.id!==flags['source-message'])throw error('SOURCE_CHANGED','The selected human instruction is no longer current.');
+    if(flags.pending&&context.pendingKickoff?.state!=='waiting_peer')throw error('START_CONFIRMATION_EXPIRED','No current peer plan is waiting for confirmation.');
+    const planText=flags.pending?context.pendingKickoff.planText:textFile(flags.file),planSha256=createHash('sha256').update(planText,'utf8').digest('hex');
+    if(flags['plan-sha256']&&flags['plan-sha256']!==planSha256)throw error('PLAN_CHANGED','The plan differs from the one you read.');
+    const sourceHash=flags['source-sha256']??context.sourceHumanMessage.textSha256;
+    if(!/^[a-f0-9]{64}$/.test(sourceHash))throw error('INVALID_INPUT','Invalid full source hash.');
+    body=operation(runtime,bindingId,opKey,flags.op,()=>({
+      sourceHumanMessageId:flags['source-message'],sourceTextSha256:sourceHash,planText,planSha256,implementationAuthorized:true,
+      expectedBindings:{codex:validId(flags['codex-binding']??context.expectedBindings.codex,'--codex-binding'),claude:validId(flags['claude-binding']??context.expectedBindings.claude,'--claude-binding')},
+      expectedGate:{segmentId:validId(flags['gate-segment']??context.expectedGate.segmentId,'--gate-segment'),version:positiveInteger(flags['gate-version']??context.expectedGate.version,'--gate-version')}
+    }));
+    }
+    let result;try{result=await call('confirm-start',body);}catch(cause){if(cause.outcome==='rejected')rejectOperation(runtime,bindingId,body.operationId,cause);throw cause;}
+    commitOperation(runtime,bindingId,body.operationId);return print(result);
   }
   const workId = validId(flags.work, '--work');
   if(command==='work-status'){const result=await call(`work/${encodeURIComponent(workId)}/status`);if(result.workId!==workId)throw error('INVALID_RESPONSE','Work status belongs to another task.');return print(result);}

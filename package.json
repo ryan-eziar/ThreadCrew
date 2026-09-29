@@ -1,6 +1,6 @@
 {
   "name": "threadcrew",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "One local room for you and your existing Codex and Claude sessions",
@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/launch-agent-chat.ps1 -NoOpen",
-    "test": "node --test tests/*.test.mjs ui/tests/*.test.mjs"
+    "test": "node --test --test-concurrency=4 tests/*.test.mjs ui/tests/*.test.mjs"
   },
   "license": "MIT",
   "author": "Ryan Zhang"

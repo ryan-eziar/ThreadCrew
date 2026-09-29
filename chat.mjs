@@ -145,8 +145,9 @@ export async function runCli(args, { stdout = text => process.stdout.write(text)
           transport: codexTransport, codexReceiveMode: receiveProof.codexReceiveMode,
           codexReceiveModeProvider: async () => (await loadNativeReceiveProof({ runtimeDir, projectDir: PROJECT })).codexReceiveMode,
         });
-        server = await createV2Server({ broker, work, runtimeDir, projectDir: PROJECT, port, onShutdown: closeResources,
+        server = await createV2Server({ broker, work, runtimeDir, projectDir: PROJECT, port, onShutdown: closeResources, autoUpdateChecks:true,
           onShutdownFailure: () => process.exit(1) });
+        await broker.recheckNativeConnections();
       }
       catch (cause) { await work?.close(); await broker.close(); await codexTransport.close?.(); throw cause; }
       print({ status: 'LISTENING', apiVersion: 'agent-chat.window.v2', url: server.url, workspaceId: broker.workspaceId, runtimeDir, nativeReceive: receiveProof });

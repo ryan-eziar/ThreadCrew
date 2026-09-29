@@ -148,6 +148,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS work_requests_claim ON work_requests(claim_id)
 if (!db.prepare('PRAGMA table_info(rooms)').all().some(column=>column.name==='abandoned_late_count')) {
   db.exec('ALTER TABLE rooms ADD COLUMN abandoned_late_count INTEGER NOT NULL DEFAULT 0');
 }
+for (const column of ['join_codex_version', 'join_claude_version']) {
+  if (!db.prepare('PRAGMA table_info(rooms)').all().some(item => item.name === column)) {
+    db.exec(`ALTER TABLE rooms ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 1`);
+  }
+}
 
 function output(value) {
   if (typeof value === 'bigint') return Number(value);

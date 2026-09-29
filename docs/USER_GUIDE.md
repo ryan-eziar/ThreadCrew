@@ -26,8 +26,10 @@ Each room has one seat for Claude Code and one for Codex.
 3. To move a seat to another session, use **Copy join line for a new session** in the same menu
    and paste it into the new session.
 
-A session sits in one room at a time. If a session says the join line is outdated
-(`GATE_CHANGED`), the room changed in the meantime: copy the line again.
+You can copy both join lines at once: one agent joining first doesn't spoil the other's line.
+A session sits in one room at a time. If a session says the join line is outdated (`GATE_CHANGED` or
+`JOIN_CHANGED`), the room or that seat changed in the meantime (the room was stopped or restored, or
+the seat was taken or removed): copy the line again.
 
 During a work session, Codex is woken automatically only once that has been confirmed to work on
 your computer; until then it picks up work requests when it next checks in.
@@ -60,6 +62,19 @@ banner waits 45 seconds first, so the short pauses between an agent's replies ne
 The line is refused in any other session. To move a seat to another session, use **Copy join line
 for a new session** instead.
 
+### Resuming unanswered messages
+
+An agent can lose track of a reply it still owes, for example after its app compacts a long
+conversation. Once a reply has been awaited for five minutes, the message offers **Copy resume line**
+next to **Stop waiting**; the agent's menu has it too.
+
+1. Click **Copy resume line**.
+2. Paste it into that agent's original session, the same conversation that is in the room.
+3. The session checks that it is the same one, then lists exactly the messages it still has to
+   answer, and answers them.
+
+Nothing is sent or answered on the agent's behalf, and the line is refused in any other session.
+
 ## Sending
 
 - By default a message goes to both agents. Click a name under the text to leave it out, or type
@@ -87,6 +102,12 @@ same round that they have nothing to add. The button then offers **Discuss again
 When a discussion can't start yet, the button stays in its place, greyed, and its popover says why
 (for example, one answer is still missing, or an agent can't receive). While a discussion runs, the
 button shows the round; its popover offers **Stop**, which stops the whole room, so it asks first.
+
+**Starting work when both agree.** If your message already says to go ahead once they agree (for
+example "discuss it, then start"), both agents confirm the same plan when they are done, and the room
+starts a work session by itself, with the standard budget and time limit. The room shows that it
+started, on the strength of which message, and with which plan; **Stop** works as usual. Only your
+own messages count, and if only one agent confirms, nothing starts. **Kick off** works as before.
 
 ## Work sessions
 
@@ -160,6 +181,25 @@ empty means "You". It also shows the version and the license, and **Copy diagnos
 short technical summary for bug reports. It contains the product and Node versions, the platform
 and the checks, and no credentials, paths or conversation IDs.
 
+## Updates
+
+**Settings and about → Updates** shows the version you have, the latest release and when ThreadCrew
+last checked.
+
+- **Check for updates automatically** (on by default) asks GitHub when ThreadCrew starts and every
+  six hours. It only looks up version numbers. **Check now** asks at once.
+- When a release is out, a line at the top of the window says so. **Later** hides it for that version.
+- **Update to v…** asks first. An update waits until no messages or work are pending: if some are,
+  the dialog lists the busy rooms and what is left in each. It also warns about unsent text or files
+  in this window, which a restart loses.
+- After you confirm, the window shows the steps: download, verify, stop, install, restart. ThreadCrew
+  then opens a new window by itself (the address may change), and the old one can be closed. If no
+  new window opens, open ThreadCrew from its shortcut.
+- If the new version doesn't start, ThreadCrew goes back to the previous version and says so. An
+  update that fails before ThreadCrew stops leaves it running as it was.
+- A ZIP install or a clean Git clone on `main` updates this way. A clone with local changes, local
+  commits or another branch is not touched: update it with Git yourself.
+
 ## Quitting ThreadCrew
 
 Closing the window keeps ThreadCrew running in the background. The agents keep receiving only while
@@ -191,3 +231,7 @@ Other open ThreadCrew windows show the same result. The agents' own sessions are
   Use **Copy join line for a new session** only when you mean to give the seat to another session.
 - **A delivery is marked Check needed.** Look in the agent's own app before resending, because it
   may already have the message.
+- **An agent seems to have forgotten a message.** After five minutes the message offers **Copy
+  resume line**: paste it into that agent's same session (see *Resuming unanswered messages*).
+- **An update didn't finish.** The window says why. ThreadCrew stays on, or goes back to, the
+  previous version, with your rooms and records intact.

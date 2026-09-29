@@ -4,6 +4,8 @@ import { mkdir, readFile, realpath, stat, unlink } from 'node:fs/promises';
 import { extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { once } from 'node:events';
 import { ThreadCrewFeatures } from './threadcrew-features.mjs';
+import { UpdateManager } from './update-manager.mjs';
+import { updateError } from './update-package.mjs';
 import { bearer, sameToken, secret, commonHeaders, identifier, fields, injectBootstrap, jsonBody, validateGate, atomicJson, rejectQuery } from './broker-server.mjs';
 
 export const API_VERSION = 'agent-chat.window.v2';
@@ -29,7 +31,7 @@ function errorResponse(res, error, mutated, version = API_VERSION) {
   res.end(JSON.stringify({ ok: false, apiVersion: version, error: { code, message: outcome === 'unknown' ? 'The outcome is unknown. Check the original operation ID.' : 'The request was not completed. Check the current state.', outcome, retrySameOperation: outcome === 'unknown', details } }));
 }
 
-export async function createV2Server({ broker, work = null, runtimeDir, projectDir, port = 0, onShutdown = null, onShutdownFailure = null, shutdownGraceMs = 2000 }) {
+export async function createV2Server({ broker, work = null, runtimeDir, projectDir, port = 0, onShutdown = null, onShutdownFailure = null, shutdownGraceMs = 2000, autoUpdateChecks = false, updateOptions = {} }) {
   if (!broker || (onShutdown !== null && typeof onShutdown !== 'function') || !Number.isInteger(port) || port < 0 || port > 65535) throw new TypeError('Invalid server arguments');
   if (!Number.isInteger(shutdownGraceMs) || shutdownGraceMs < 0 || shutdownGraceMs > 30000) throw new TypeError('Invalid shutdown acknowledgement interval');
   if (onShutdownFailure !== null && typeof onShutdownFailure !== 'function') throw new TypeError('Invalid shutdown failure handler');
@@ -41,7 +43,23 @@ export async function createV2Server({ broker, work = null, runtimeDir, projectD
   const instanceId = broker.instanceId, workspaceId = broker.workspaceId;
   identifier(instanceId); identifier(workspaceId);
   await broker.store.tx(sql => sql.run('CREATE TABLE IF NOT EXISTS http_credentials (binding_id TEXT PRIMARY KEY, room_id TEXT NOT NULL, agent TEXT NOT NULL, native_session_id TEXT NOT NULL, credential TEXT NOT NULL, credential_hash TEXT NOT NULL UNIQUE, legacy INTEGER NOT NULL DEFAULT 0)'));
-  let baseUrl, authority, closing = false, shutdownRequested = false, shutdown = null, shutdownTimer = null, closePromise = null;
+  let baseUrl, authority, closing = false, shutdownRequested = false, shutdown = null, shutdownTimer = null, closePromise = null, updatePreparing = false;
+  const updates = await new UpdateManager({ projectDir, runtimeDir: root, features, ...updateOptions,
+    prepareShutdown: onShutdown ? async (operationId, launch) => {
+      if(shutdownRequested || updatePreparing) throw updateError('UPDATE_IN_PROGRESS');
+      updatePreparing=true;
+      try {
+        // Fence new HTTP mutations first, then let already admitted mutations
+        // settle before the final serialized snapshot and shutdown handoff.
+        await Promise.allSettled([...activeMutations]);
+        await broker.store.read(async sql => {
+          const preview=await features.updatePreview(sql);
+          if(Object.values(preview.counts).some(n=>n>0)) throw updateError('UPDATE_BUSY',preview);
+          await launch();
+          requestShutdown('update-'+operationId);
+        });
+      } finally { updatePreparing=false; }
+    } : null }).initialize();
   const notifyShutdown = () => {
     const frame = `event: service.shutdown\ndata: ${JSON.stringify(shutdown)}\n\n`;
     for (const res of streams) {
@@ -50,7 +68,7 @@ export async function createV2Server({ broker, work = null, runtimeDir, projectD
     }
   };
   const closeServer = () => closePromise ??= (async () => {
-    closing = true; clearInterval(heartbeat); clearTimeout(shutdownTimer);
+    closing = true; updates.close(); clearInterval(heartbeat); clearTimeout(shutdownTimer);
     for (const controller of aborts) controller.abort(); for (const res of streams) res.end();
     await new Promise(done => { server.close(done); server.closeAllConnections(); });
     for (const agent of ROLES) { const path = join(root, `connection-${agent}.json`); try { if (JSON.parse(await readFile(path, 'utf8')).instanceId === instanceId) await unlink(path); } catch {} }
@@ -181,7 +199,11 @@ export async function createV2Server({ broker, work = null, runtimeDir, projectD
           return response(res, requestShutdown(shutdownId), 202);
         }
         if (shutdownRequested) fail('CLOSED',503);
+        if (req.method === 'POST' && (updatePreparing || await updates.isApplying())) fail('UPDATE_IN_PROGRESS');
         if (req.method === 'GET') {
+          if (parts[2] === 'updates' && parts.length === 3) { rejectQuery(url); return response(res,{updates:await updates.state()}); }
+          if (parts[2] === 'updates' && parts[3] === 'install-status' && parts.length === 4) { rejectQuery(url); return response(res,{updates:await updates.state()}); }
+          if (parts[2] === 'updates' && parts[3] === 'preview' && parts.length === 4) { rejectQuery(url); return response(res,await features.updatePreview()); }
           if (parts.length === 4 && parts[2] === 'admin' && parts[3] === 'shutdown-preview') { rejectQuery(url); return response(res, await features.shutdownPreview()); }
           if (parts.length === 3 && parts[2] === 'settings') { rejectQuery(url); return response(res, { settings: await features.settings() }); }
           if (parts.length === 3 && parts[2] === 'diagnostics') { rejectQuery(url); return response(res, features.diagnostics()); }
@@ -194,9 +216,20 @@ export async function createV2Server({ broker, work = null, runtimeDir, projectD
           if (req.headers.origin !== baseUrl || req.headers['sec-fetch-site'] === 'cross-site') fail('FORBIDDEN', 403);
           rejectQuery(url); const body = fields(await jsonBody(req, maxBytes), allowed, required);
           if (shutdownRequested) fail('CLOSED',503);
+          if(updatePreparing || await updates.isApplying()) fail('UPDATE_IN_PROGRESS');
           identifier(body.operationId); validateGate(body); markMutation(); return body;
         };
-        if (parts.length === 3 && parts[2] === 'settings') return response(res, await features.setSettings(await humanPost(['operationId','expectedVersion','displayName','backgroundNoticeAcknowledged'], ['operationId','expectedVersion'])));
+        if(parts[2]==='updates' && parts.length===4 && req.method==='POST') {
+          if(req.headers.origin!==baseUrl || req.headers['sec-fetch-site']==='cross-site') fail('FORBIDDEN',403);
+          rejectQuery(url);
+          if(parts[3]==='check'){fields(await jsonBody(req),[],[]);return response(res,{updates:await updates.check()});}
+          if(parts[3]==='install'){
+            const body=fields(await jsonBody(req),['operationId','expectedVersion']);markMutation();
+            return response(res,{updates:await updates.install(body)},202);
+          }
+          fail('NOT_FOUND',404);
+        }
+        if (parts.length === 3 && parts[2] === 'settings') return response(res, await features.setSettings(await humanPost(['operationId','expectedVersion','displayName','backgroundNoticeAcknowledged','autoCheckUpdates'], ['operationId','expectedVersion'])));
         if (parts.length === 3 && parts[2] === 'rooms') return response(res, await broker.createRoom(await humanPost(['operationId', 'name'])));
         if (parts[2] !== 'rooms' || !parts[3]) fail('NOT_FOUND', 404);
         const roomId = identifier(parts[3]), endpoint = parts.slice(4), action = endpoint.join('/');
@@ -261,6 +294,7 @@ export async function createV2Server({ broker, work = null, runtimeDir, projectD
       }
       if (parts[0] === 'agent') {
         if (req.headers.origin !== undefined) fail('FORBIDDEN', 403);
+        if(req.method==='POST' && (updatePreparing || await updates.isApplying())) fail('UPDATE_IN_PROGRESS');
         rejectQuery(url);
         if (parts[1] === 'v1') {
           if (shutdownRequested) fail('CLOSED',503);
@@ -287,8 +321,9 @@ export async function createV2Server({ broker, work = null, runtimeDir, projectD
         const roomId = identifier(parts[3]), action = parts[4];
         if (parts.length === 5 && action === 'join' && req.method === 'POST') {
           const agent = [...enrollments].find(([, token]) => sameToken(token, bearer(req)))?.[0]; if (!agent) fail('FORBIDDEN', 403);
-          const body = fields(await jsonBody(req), ['agent', 'nativeSessionId', 'label', 'expectedBindingId', 'expectedGate', 'renew', 'reconnect'], ['agent', 'nativeSessionId', 'expectedBindingId', 'expectedGate']);
+          const body = fields(await jsonBody(req), ['agent', 'nativeSessionId', 'label', 'expectedBindingId', 'expectedGate', 'expectedJoinVersion', 'renew', 'reconnect'], ['agent', 'nativeSessionId', 'expectedBindingId', 'expectedGate']);
           if (shutdownRequested) fail('CLOSED',503);
+          if(updatePreparing || await updates.isApplying()) fail('UPDATE_IN_PROGRESS');
           if (body.agent !== agent) fail('FORBIDDEN', 403); validateGate(body); markMutation();
           const result = await broker.join(roomId, body), bindingId = identifier(result.bindingId);
           let credential;
@@ -299,10 +334,17 @@ export async function createV2Server({ broker, work = null, runtimeDir, projectD
         }
         const b = await bindingAuth(req); if (b.roomId !== roomId) fail('FORBIDDEN', 403);
         if (parts.length === 5 && action === 'status' && req.method === 'GET') return response(res, scoped(await broker.getBinding(roomId, b.bindingId), b));
+        if (parts.length === 5 && action === 'resume' && req.method === 'GET') { rejectQuery(url); return response(res, scoped(await broker.resumeBinding(roomId,b.bindingId), b)); }
+        if(work && parts.length===5 && action==='start-context' && req.method==='GET')return response(res,scoped(await work.startContext(roomId,b.bindingId),b));
         if(work&&parts.length===7&&action==='work'&&parts[6]==='status'&&req.method==='GET')return response(res,scoped(await work.agentStatus(roomId,identifier(parts[5]),b.bindingId),b));
         if (req.method !== 'POST') fail('NOT_FOUND', 404);
         const body = await jsonBody(req);
         if (shutdownRequested) fail('CLOSED',503);
+        if(updatePreparing || await updates.isApplying()) fail('UPDATE_IN_PROGRESS');
+        if(work && parts.length===5 && action==='confirm-start') {
+          markMutation();validateGate(body);
+          return response(res,scoped(await work.confirmStart(roomId,b.bindingId,body),b));
+        }
         if (parts.length === 5 && action === 'wait') {
           fields(body, ['requestId', 'workId', 'notificationScopes'], ['requestId']); identifier(body.requestId);
           const controller = new AbortController(); aborts.add(controller);
@@ -345,7 +387,7 @@ export async function createV2Server({ broker, work = null, runtimeDir, projectD
       let file; try { file = await realpath(candidate); if (!within(file) || !(await stat(file)).isFile()) fail('NOT_FOUND', 404); } catch { fail('NOT_FOUND', 404); }
       let content = await readFile(file); const nonce = secret();
       res.setHeader('Content-Security-Policy', `default-src 'self'; script-src 'self' 'nonce-${nonce}'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'`);
-      if (extname(file) === '.html') content = injectBootstrap(content.toString('utf8'), `<script nonce="${nonce}">window.__AGENT_CHAT__=${JSON.stringify({ apiVersion: API_VERSION, workspaceId, instanceId, baseUrl, humanToken, capabilities: { ...broker.capabilities, shutdown: Boolean(onShutdown) }, shutdown }).replace(/</g, '\\u003c')};</script>`);
+      if (extname(file) === '.html') content = injectBootstrap(content.toString('utf8'), `<script nonce="${nonce}">window.__AGENT_CHAT__=${JSON.stringify({ apiVersion: API_VERSION, workspaceId, instanceId, baseUrl, humanToken, version:updates.installedVersion, capabilities: { ...broker.capabilities, shutdown: Boolean(onShutdown), updates:true }, shutdown }).replace(/</g, '\\u003c')};</script>`);
       res.writeHead(200, { 'Content-Type': TYPES[extname(file)] }); res.end(content);
     } catch (error) { errorResponse(res, error, mutated, responseVersion); }
     finally { releaseMutation?.(); }
@@ -358,5 +400,6 @@ export async function createV2Server({ broker, work = null, runtimeDir, projectD
     await mkdir(root, { recursive: true });
     for (const [agent, enrollmentToken] of enrollments) await atomicJson(join(root, `connection-${agent}.json`), { apiVersion: API_VERSION, workspaceId, instanceId, baseUrl, agent, enrollmentToken });
   } catch (error) { clearInterval(heartbeat); server.closeAllConnections(); server.close(); throw error; }
-  return { url: baseUrl, workspaceId, instanceId, credentials: () => ({ humanToken }), close: closeServer };
+  if(autoUpdateChecks) updates.startAutomatic();
+  return { url: baseUrl, workspaceId, instanceId, credentials: () => ({ humanToken }), close: closeServer, updates };
 }

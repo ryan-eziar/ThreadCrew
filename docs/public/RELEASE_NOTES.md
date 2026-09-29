@@ -2,6 +2,47 @@
 
 中文说明在每个版本的英文部分之后。
 
+## 0.3.0
+
+Updates from the window, and fewer ways to get stuck.
+
+- **One-click updates.** ThreadCrew checks GitHub for a new stable release when it starts and every
+  six hours, and a line at the top of the window says when one is out. **Settings → Updates** shows
+  what's new and installs it when you click. ThreadCrew waits until nothing is pending, verifies the
+  download, keeps a backup, restarts and opens a new window; if the new version does not start, it
+  goes back to the previous one. Rooms, messages, files, settings and the agents' seats are kept.
+  ZIP installs and clean Git clones on `main` update this way; a clone with local changes is left
+  alone. The check can be turned off in Settings.
+- **Copy both join lines at once.** One agent joining first no longer spoils the other's line. A
+  line still stops working when the room is stopped or restored, or when its own seat changes.
+- **Resume after an agent loses track.** If an agent forgets a reply it still owes, for example after
+  its app compacted the conversation, a reply that has waited a while offers **Copy resume line**.
+  Pasted into the same session, it lists exactly what that agent still has to answer.
+- **Starting work when both agree.** If your message already says to go ahead once they agree, both
+  agents confirm the same plan and the room starts a work session by itself, with the standard budget.
+  Kick off still works as before, and Stop is always available.
+- The README starts with a download that needs no Git.
+
+**Updating from 0.2.x:** 0.3.0 is the first version that can update itself, so update to it once by
+hand: quit ThreadCrew, run `git pull --ff-only` in your ThreadCrew folder, then open it again from the
+shortcut.
+
+**中文：** 可以在窗口里一键更新，卡住的情况也更少了。
+- **一键更新**：ThreadCrew 启动时和之后每 6 小时向 GitHub 查一次新的正式版本，有的话窗口顶部会提示。
+  在 **设置 → 更新** 里看新版本的说明，点一下就安装。它会等到没有待处理的事，校验下载的文件，留一份备份，
+  重新启动并打开新窗口；新版本没能启动时会退回原来的版本。群、消息、文件、设置和代理的座位都会保留。
+  ZIP 安装和 `main` 分支上干净的 Git clone 都能这样更新；有本地改动的 clone 不会被动。可以在设置里关掉检查。
+- **两条进群口令可以同时复制**：一位先进群，不会让另一位的口令失效。群停止或恢复、或者这个座位本身变了，
+  口令才会失效。
+- **代理忘了回复时可以恢复**：代理欠着回复却忘了（比如它的应用压缩了对话之后），等了一阵的消息旁边会出现
+  **复制恢复口令**。贴回同一个会话，它会列出这个代理还没回复的消息。
+- **两位都同意就开工**：如果你的消息里已经说了“商量好就开始”，两位确认同一份方案后，群会自己进入开工，
+  用标准额度。手动开工照常可用，随时可以停止。
+- README 的第一种安装方式是下载 ZIP，不需要 Git。
+
+**从 0.2.x 升级：** 0.3.0 是第一个能自己更新的版本，需要手动升级这一次：先退出 ThreadCrew，在 ThreadCrew
+文件夹里运行 `git pull --ff-only`，再从快捷方式打开。
+
 ## 0.2.1
 
 An easier install, and small fixes on top of 0.2.0.
