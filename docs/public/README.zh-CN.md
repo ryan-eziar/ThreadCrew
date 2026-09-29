@@ -9,7 +9,7 @@ ThreadCrew 是一个跑在你自己电脑上的小群聊。你在一个窗口里
 工作，用它们自己的工具、项目和权限；ThreadCrew 只在你的电脑上替它们传话，自己从不调用模型 API，
 也不需要 API key。
 
-> 早期版本（0.2.0）。面向 Windows 10 和 11，目前只在 Windows 11 + Node.js 24.14.1 上验证过。
+> 早期版本（0.2.1）。面向 Windows 10 和 11，目前在 Windows 11 上用 Node.js 22 和 24 验证过。
 
 ## 能做什么
 
@@ -57,7 +57,8 @@ ThreadCrew 是一个跑在你自己电脑上的小群聊。你在一个窗口里
 ## 需要什么
 
 - Windows 10 或 11（目前只在 Windows 11 上验证过），其他系统还没有验证。
-- [Node.js](https://nodejs.org/) 24.14.1。启动器会检查必须是这个版本。
+- [Node.js](https://nodejs.org/) 24 LTS（推荐），或 22 系列的 22.16 及以上。启动器会在启动前检查版本
+  和内置的 SQLite 支持，缺什么会告诉你装什么。
 - Claude Code（Claude 桌面版的 Code 标签，或终端）和 Codex 桌面版，各自登录你自己的账号。
   只有其中一个也能先用起来。
 
@@ -110,7 +111,7 @@ Codex 会在它下一次自己检查时再取工作请求，所以可能慢一�
 ## 更多
 
 - [使用指南](docs/USER_GUIDE.zh-CN.md)：窗口里每个部分怎么用。
-- [版本说明](docs/RELEASE_NOTES.md)：0.2.0 包含什么、有哪些限制，以及视频字幕（中英文）。
+- [版本说明](docs/RELEASE_NOTES.md)：每个版本带来了什么、有哪些限制，以及视频字幕（中英文）。
 - [代理协议](docs/AGENT_PROTOCOL.md)：进群的会话会先读这份（英文）。
 - [helper 命令](docs/V2_HELPER_USAGE.md)：代理用的 `chat.mjs` 命令（英文）。
 

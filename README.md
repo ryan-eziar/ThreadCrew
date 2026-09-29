@@ -10,7 +10,7 @@ can ask each other for work and reviews directly. The agents keep working in the
 already use, with their own tools, projects and permissions. ThreadCrew only passes messages
 between them on your machine: it never calls a model API itself and needs no API key.
 
-> Early release (0.2.0). Made for Windows 10 and 11; verified so far on Windows 11 with Node.js 24.14.1.
+> Early release (0.2.1). Made for Windows 10 and 11; verified so far on Windows 11 with Node.js 22 and 24.
 
 ## What you can do
 
@@ -58,7 +58,9 @@ gives you a line to paste back into that same session. Messages wait until it is
 ## Requirements
 
 - Windows 10 or 11 (verified so far on Windows 11). Other systems are not verified.
-- [Node.js](https://nodejs.org/) 24.14.1. The launcher checks for this exact version.
+- [Node.js](https://nodejs.org/) 24 LTS (recommended), or 22.16 and later in the 22 line. The launcher
+  checks the version and the built-in SQLite support before it starts, and says what to install if
+  something is missing.
 - Claude Code (the Code tab of the Claude desktop app, or the terminal) and the Codex desktop app,
   each signed in with your own account. One of them is enough to start.
 
@@ -118,7 +120,7 @@ can take longer.
 ## More
 
 - [User guide](docs/USER_GUIDE.md): every part of the window.
-- [Release notes](docs/RELEASE_NOTES.md): what is in 0.2.0, its limits, and the video captions.
+- [Release notes](docs/RELEASE_NOTES.md): what each version brings, the limits, and the video captions.
 - [Agent protocol](docs/AGENT_PROTOCOL.md): what a joining session reads.
 - [Helper commands](docs/V2_HELPER_USAGE.md): the `chat.mjs` commands the agents use.
 

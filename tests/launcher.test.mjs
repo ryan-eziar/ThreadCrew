@@ -25,9 +25,9 @@ async function removeTemp(runtime) {
   assert.ok(target.startsWith(workRoot) && target.slice(workRoot.length).startsWith('launcher-test-') && !target.slice(workRoot.length).includes(sep));
   await rm(target, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
 }
-function ps(runtime) {
+function ps(runtime, options = {}) {
   return new Promise(resolveResult => {
-    const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-RuntimeDir', runtime, '-NodePath', nodePath, '-NoOpen'], { windowsHide: true });
+    const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-RuntimeDir', runtime, '-NodePath', nodePath, '-NoOpen'], { windowsHide: true, ...options });
     let stdout = '', stderr = '';
     child.stdout.setEncoding('utf8').on('data', data => { stdout += data; });
     child.stderr.setEncoding('utf8').on('data', data => { stderr += data; });
@@ -81,6 +81,17 @@ async function fakeV2Service(runtime, { wrongWorkspace = false } = {}) {
   await Promise.all(Object.entries(enrollments).map(([agent, enrollmentToken]) => writeFile(join(runtime, `connection-${agent}.json`), JSON.stringify({ apiVersion: 'agent-chat.window.v2', workspaceId, instanceId, baseUrl, agent, enrollmentToken }))));
   return { close: () => new Promise(done => server.close(done)), baseUrl };
 }
+
+test('missing SQLite is rejected before any runtime directory is created', async () => {
+  const fixture = await tempRuntime();
+  const runtime = join(fixture, 'not-created');
+  try {
+    const result = await ps(runtime, { env: { ...process.env, NODE_OPTIONS: '--no-experimental-sqlite' } });
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /SQLite support is unavailable/);
+    await assert.rejects(readdir(runtime), { code: 'ENOENT' });
+  } finally { await removeTemp(fixture); }
+});
 
 test('reuses only descriptor and authenticated broker identity', async () => {
   const runtime = await tempRuntime();

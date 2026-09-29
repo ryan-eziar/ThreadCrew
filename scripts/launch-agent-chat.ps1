@@ -9,12 +9,13 @@ $projectDir = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 if (-not $RuntimeDir) { $RuntimeDir = Join-Path $projectDir 'runtime' }
 if (-not $NodePath) {
     $nodeCommand = Get-Command node.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $nodeCommand) { throw 'Node.js 24.14.1 is required. Install it, reopen the terminal, or pass -NodePath with the absolute path to node.exe.' }
+    if (-not $nodeCommand) { throw 'Node.js 22.16+ (22.x) or 24.x is required. Install the latest Node.js 24 LTS, reopen the terminal, or pass -NodePath with the absolute path to node.exe.' }
     $NodePath = $nodeCommand.Source
 }
 $chatPath = Join-Path $projectDir 'chat.mjs'
 $probePath = Join-Path $projectDir 'src\service-discovery.mjs'
 $recoveryPath = Join-Path $projectDir 'src\runtime-recovery.mjs'
+$nodeCheckPath = Join-Path $projectDir 'src\node-runtime.mjs'
 $runtimePath = [System.IO.Path]::GetFullPath($RuntimeDir)
 
 function Get-Discovery {
@@ -49,7 +50,11 @@ if (-not [System.IO.Path]::IsPathRooted($NodePath)) { throw '-NodePath must be a
 $nodeExe = (Resolve-Path -LiteralPath $NodePath -ErrorAction Stop).ProviderPath
 if ([System.IO.Path]::GetFileName($nodeExe) -ne 'node.exe') { throw '-NodePath must name node.exe.' }
 $nodeVersion = (& $nodeExe --version).Trim()
-if ($LASTEXITCODE -ne 0 -or $nodeVersion -ne 'v24.14.1') { throw "Expected the verified Node v24.14.1 runtime; found $nodeVersion at $nodeExe." }
+if ($LASTEXITCODE -ne 0) { throw "Could not read the Node.js version at $nodeExe." }
+$nodeCheckRaw = & $nodeExe --disable-warning=ExperimentalWarning $nodeCheckPath
+$nodeCheckExit = $LASTEXITCODE
+try { $nodeCheck = $nodeCheckRaw | ConvertFrom-Json } catch { throw "Could not verify Node.js $nodeVersion. Install the latest Node.js 24 LTS and reopen the terminal." }
+if ($nodeCheckExit -ne 0 -or -not $nodeCheck.ok) { throw "Unsupported Node.js runtime ($nodeVersion). $($nodeCheck.message)" }
 
 $canonicalRaw = & $nodeExe $recoveryPath canonical $runtimePath
 if ($LASTEXITCODE -ne 0) { throw "Cannot resolve a safe local runtime: $canonicalRaw" }

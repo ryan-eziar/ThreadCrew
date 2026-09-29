@@ -9,6 +9,7 @@ const PNG_ASSETS = ['docs/media/threadcrew-poster.png',
   'docs/media/screenshot-room.png','docs/media/screenshot-discuss.png',
   'docs/media/screenshot-work.png','docs/media/screenshot-reconnect.png'];
 const CORE = ['chat.mjs','package.json','LICENSE','.gitignore','.gitattributes',
+  '.github/ISSUE_TEMPLATE/bug-report.md',
   'scripts/launch-agent-chat.ps1','scripts/open-agent-chat.ps1','scripts/install-shortcut.ps1','scripts/agent-chat.ico',
   'scripts/export-public.mjs','docs/AGENT_PROTOCOL.md','docs/V2_HELPER_USAGE.md','docs/THIRD_PARTY_SOURCES.md',
   'docs/THREADCREW_RELEASE_CONTRACT.md',...PNG_ASSETS];

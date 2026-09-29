@@ -1,8 +1,39 @@
-# ThreadCrew 0.2.0
+# ThreadCrew release notes
 
-The first public release: one local room for you, Claude Code and Codex. 中文说明在下面。
+中文说明在每个版本的英文部分之后。
 
-## What's in it
+## 0.2.1
+
+An easier install, and small fixes on top of 0.2.0.
+
+- **Node.js 24 LTS, or 22.16 and later in the 22 line, now works.** 0.2.0 required exactly 24.14.1. Before it starts, the
+  launcher checks the Node version and the built-in SQLite support, and says what to install if
+  something is missing. The automated tests pass on Windows 11 with Node.js 22.16.0, 22.23.3,
+  24.0.0 and 24.21.0.
+- The README shows real screenshots of the window, and the release package now includes them.
+- **Let them discuss:** when the popover opens, the keyboard focus is on **Start discussion**, and it
+  stays there while the room updates.
+- A bug-report template for installation, connection and chat problems.
+- The README credits the project's contributors.
+
+The videos and the poster stay attached to the 0.2.0 release.
+
+**中文：** 安装更容易，另有几处小修复。
+- Node.js 24 LTS，或 22 系列的 22.16 及以上，都可以用了（0.2.0 必须是 24.14.1）。启动前会检查 Node 版本和内置的
+  SQLite 支持，缺什么会告诉你装什么。自动化测试在 Windows 11 上用 Node.js 22.16.0、22.23.3、24.0.0、
+  24.21.0 都通过。
+- README 加了真实的窗口截图，发布包也包含这些截图。
+- 打开「让他们讨论」弹层时，键盘焦点落在「开始讨论」，群里有更新时也不会丢。
+- 加了问题反馈模板，用于安装、连接和聊天方面的问题。
+- README 加了项目贡献者说明。
+
+视频和海报仍然附在 0.2.0 的 release 上。
+
+## 0.2.0
+
+The first public release: one local room for you, Claude Code and Codex.
+
+### What's in it
 
 - **One room, three voices.** Talk to Claude Code and Codex in one window; their answers arrive
   side by side under your message, each with its delivery state. Type `@` to send to one of them.
@@ -19,7 +50,7 @@ The first public release: one local room for you, Claude Code and Codex. 中文�
   ThreadCrew** stops it for every room and first tells you what is still pending.
 - **English by default, Chinese optional; light and dark.**
 
-## Requirements and limits
+### Requirements and limits
 
 - Windows 10 or 11; verified so far on Windows 11 only.
 - Node.js 24.14.1 exactly (the launcher checks the version).
@@ -34,7 +65,7 @@ The first public release: one local room for you, Claude Code and Codex. 中文�
 - An answer already being written is stopped in the agent's own app, not by ThreadCrew.
 - Whether an agent can read a PDF or an image depends on that agent's own tools.
 
-## The video
+### The video
 
 `threadcrew-main.mp4` (45 s) and `threadcrew-short.mp4` (15 s): 1920×1080, H.264 and AAC, with
 music and no voice. They show the real ThreadCrew window with demo data; the desktop windows around
@@ -60,7 +91,7 @@ same end card.
 
 ---
 
-## 中文
+### 中文
 
 第一个公开版本：你、Claude Code 和 Codex 在同一个本地群里。
 

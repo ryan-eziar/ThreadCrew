@@ -1,7 +1,8 @@
 import { extname, resolve } from 'node:path';
 import { createAttachment, readAttachmentBytes } from './broker-storage.mjs';
+import { isSupportedNode, SUPPORTED_NODE_RANGE } from './node-runtime.mjs';
 
-export const PRODUCT = { product: 'ThreadCrew', version: '0.2.0', author: 'Ryan Zhang', license: 'MIT' };
+export const PRODUCT = { product: 'ThreadCrew', version: '0.2.1', author: 'Ryan Zhang', license: 'MIT' };
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const fail = (code, status = 400) => { throw Object.assign(new Error(code), { code, status, outcome: 'rejected' }); };
 const parse = (value, fallback = null) => value == null ? fallback : JSON.parse(value);
@@ -107,7 +108,8 @@ export class ThreadCrewFeatures {
   diagnostics() {
     return { ...PRODUCT, nodeVersion: process.versions.node, platform: process.platform,
       supportedPlatform: process.platform === 'win32',
-      checks: [{ id: 'node', status: process.versions.node === '24.14.1' ? 'ok' : 'unverified' },
+      supportedNodeRange: SUPPORTED_NODE_RANGE,
+      checks: [{ id: 'node', status: isSupportedNode() ? 'ok' : 'unverified' },
         { id: 'native_connections', status: 'check_room_members' }],
       capabilities: { localOnly: true, uploads: true, search: true, markdownExport: true, roomNotes: true,
         maxUploadBytes: MAX_UPLOAD_BYTES, maxAttachments: 20, nativeCancellationSupported: false } };

@@ -1,6 +1,6 @@
 {
   "product": "ThreadCrew",
-  "generatedAt": "2026-09-29T02:52:34.663Z",
+  "generatedAt": "2026-09-29T03:49:07.021Z",
   "files": [
     {
       "path": "chat.mjs",
@@ -9,8 +9,8 @@
     },
     {
       "path": "package.json",
-      "bytes": 456,
-      "sha256": "21f13ab45063388f551b53847b288ace1308996c32c4746a09cff3442e3c6035"
+      "bytes": 478,
+      "sha256": "88add14b3fe33a45b4ecf95908d1e2b507629e5ccf68872548ec15ae1b2aeabf"
     },
     {
       "path": "LICENSE",
@@ -28,14 +28,19 @@
       "sha256": "d60f352d0db1404c70afb4bb8b2ca3fd1c610572aa40720e8a0b7baa7885418c"
     },
     {
+      "path": ".github/ISSUE_TEMPLATE/bug-report.md",
+      "bytes": 535,
+      "sha256": "0823ac74eb68ca5f5a4ee783ec58de3a2f802bf2b5941959a5271e04e6e0f718"
+    },
+    {
       "path": "scripts/launch-agent-chat.ps1",
-      "bytes": 8283,
-      "sha256": "3a696123a834f8b509673a11e80333a02fa46160b2b6297a7c7c290280492493"
+      "bytes": 8729,
+      "sha256": "8967d423306e1047b6fc5bcadfaa1987616ec64531d5aac310c0731dd9d475f7"
     },
     {
       "path": "scripts/open-agent-chat.ps1",
-      "bytes": 5582,
-      "sha256": "ca04d6b8a80219faacc1f50d5dccf7873c5f904302e54ca679c3f34e8e547507"
+      "bytes": 5646,
+      "sha256": "1daae0c40b775cba6e990eb6fcd5b0e3eb6f44d8d5877292a922f3ede985104a"
     },
     {
       "path": "scripts/install-shortcut.ps1",
@@ -49,8 +54,8 @@
     },
     {
       "path": "scripts/export-public.mjs",
-      "bytes": 7392,
-      "sha256": "871e33e9c3b65671d6c4e9a216b3adeced552722a73dfbf2aa4ff8688d18dcdc"
+      "bytes": 7434,
+      "sha256": "378f93e1749696b829eecbc22eb39b3b7e8df1d1181dc19c9cb43683ef54aa43"
     },
     {
       "path": "docs/AGENT_PROTOCOL.md",
@@ -133,6 +138,11 @@
       "sha256": "7b2854cd366f21f0406cfbc4ce6f6b63a2b50a7a5c204bedb19ec70d22071e53"
     },
     {
+      "path": "src/node-runtime.mjs",
+      "bytes": 1950,
+      "sha256": "3dee9fdbc58fb9cfae179ede56c32841e74a6b21998397203597e814bbd17e5d"
+    },
+    {
       "path": "src/runtime-recovery.mjs",
       "bytes": 10696,
       "sha256": "c4f776ffe53f7ffc1eaf87d0ef8c7fcff048a14228858ada5c0bf17b2fe3271c"
@@ -144,8 +154,8 @@
     },
     {
       "path": "src/threadcrew-features.mjs",
-      "bytes": 15676,
-      "sha256": "ca68af148b66eb3a199f1ffbb369263e317a26be5092d26a7774893f5333f014"
+      "bytes": 15782,
+      "sha256": "56015eaeb1818546fae9ecbe5d2dfc2655c75e1c38f9c56d49027842290e92e4"
     },
     {
       "path": "src/v2-broker.mjs",
@@ -254,13 +264,18 @@
     },
     {
       "path": "tests/launcher.test.mjs",
-      "bytes": 15956,
-      "sha256": "76029212b71b93c3e68c5372aac7fe6f03d755ba88f1b031219a83842815ba6b"
+      "bytes": 16490,
+      "sha256": "f7d96729568d0545fecd228b16638eec37f98ea9d5ede6586e30db1d04ef3151"
     },
     {
       "path": "tests/native-receive-proof.test.mjs",
       "bytes": 2879,
       "sha256": "bf58b029503a080f74383c85fa6704074b4d171ea0785475a2f9fe117143be39"
+    },
+    {
+      "path": "tests/node-runtime.test.mjs",
+      "bytes": 1920,
+      "sha256": "a3abc9d54292e707f5d507b591676ad0c5b0d52a62bbbe4ad2f9c161effa3ef8"
     },
     {
       "path": "tests/public-export.test.mjs",
@@ -274,8 +289,8 @@
     },
     {
       "path": "tests/threadcrew-features.test.mjs",
-      "bytes": 11153,
-      "sha256": "6c81cc09d678dadea0088c2e7c99ca5c0f221eff67bc7df0d99557915cb65933"
+      "bytes": 11336,
+      "sha256": "f2d1fd3eadcd815a61aea2a781c83b39ff790ee313804870ca0495e6a01fa82f"
     },
     {
       "path": "tests/v2-broker.test.mjs",
@@ -359,33 +374,33 @@
     },
     {
       "path": "README.md",
-      "bytes": 7020,
-      "sha256": "0b8c2137531e88f7a1a3cdb200688e143e2c25a89014f0ea17259ddc3c0aa4ed"
+      "bytes": 7170,
+      "sha256": "4e1ce1fcec0bf73f392d9e182b379c64e0573b25bb6ba6be82dd69bda09613c2"
     },
     {
       "path": "docs/public/README.md",
-      "bytes": 7020,
-      "sha256": "0b8c2137531e88f7a1a3cdb200688e143e2c25a89014f0ea17259ddc3c0aa4ed"
+      "bytes": 7170,
+      "sha256": "4e1ce1fcec0bf73f392d9e182b379c64e0573b25bb6ba6be82dd69bda09613c2"
     },
     {
       "path": "README.zh-CN.md",
-      "bytes": 6814,
-      "sha256": "3a7443e4fb9f6930b6202311b74a2fa6c5fed773fc438b6fccdf21f231dbdff8"
+      "bytes": 6929,
+      "sha256": "71c1d113957d0e12a31d72b213d8dc08b6f22be3100e8756c4fd70dbd5d05033"
     },
     {
       "path": "docs/public/README.zh-CN.md",
-      "bytes": 6814,
-      "sha256": "3a7443e4fb9f6930b6202311b74a2fa6c5fed773fc438b6fccdf21f231dbdff8"
+      "bytes": 6929,
+      "sha256": "71c1d113957d0e12a31d72b213d8dc08b6f22be3100e8756c4fd70dbd5d05033"
     },
     {
       "path": "docs/RELEASE_NOTES.md",
-      "bytes": 5412,
-      "sha256": "7f8b6de6d09fa7d6442589c246c91df4a50238a4e8fa79cc1226b2826294565d"
+      "bytes": 6988,
+      "sha256": "a3ab47058b8f6bac46fa8c7c66574cef97df335f6b5d404df71e5a13ee463369"
     },
     {
       "path": "docs/public/RELEASE_NOTES.md",
-      "bytes": 5412,
-      "sha256": "7f8b6de6d09fa7d6442589c246c91df4a50238a4e8fa79cc1226b2826294565d"
+      "bytes": 6988,
+      "sha256": "a3ab47058b8f6bac46fa8c7c66574cef97df335f6b5d404df71e5a13ee463369"
     },
     {
       "path": "docs/USER_GUIDE.md",
@@ -419,7 +434,7 @@
     }
   ],
   "scan": {
-    "textFiles": 77,
+    "textFiles": 80,
     "findings": []
   },
   "limitations": "Pattern scan only; the icon and separately reviewed PNG assets are binary assets, not text-scanned. No runtime or original Git history included."

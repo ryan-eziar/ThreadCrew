@@ -26,7 +26,7 @@ function Get-Advice([string]$detail) {
         return 'Startup is taking longer than usual. Wait briefly and try again; the launcher reuses the same service.'
     }
     if ($detail -match 'Node') {
-        return 'Node.js v24.14.1 is required. Install that version and ensure node is on PATH. Copy details for a bug report.'
+        return 'Node.js 22.16+ (22.x) or 24.x is required. Install the latest Node.js 24 LTS, reopen the terminal and ensure node is on PATH. The details explain any missing SQLite support.'
     }
     if ($detail -match 'unrelated or unverified service') {
         return 'Another program is using the saved address. Copy the details for a bug report.'

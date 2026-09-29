@@ -1,11 +1,11 @@
 {
   "name": "threadcrew",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "description": "One local room for you and your existing Codex and Claude sessions",
   "engines": {
-    "node": "24.14.1"
+    "node": ">=22.16.0 <23 || >=24.0.0 <25"
   },
   "scripts": {
     "start": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/launch-agent-chat.ps1 -NoOpen",
