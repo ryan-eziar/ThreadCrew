@@ -4,9 +4,6 @@
 
 [![ThreadCrew in 45 seconds: play the video](docs/media/threadcrew-poster.png)](https://github.com/ryan-eziar/ThreadCrew/releases/download/v0.2.0/threadcrew-main.mp4)
 
-*45-second overview ([MP4](https://github.com/ryan-eziar/ThreadCrew/releases/download/v0.2.0/threadcrew-main.mp4), with music; a [15-second cut](https://github.com/ryan-eziar/ThreadCrew/releases/download/v0.2.0/threadcrew-short.mp4) too). It shows the
-real ThreadCrew window with demo data; the desktop windows around it are illustrations.*
-
 ThreadCrew is a small group chat that runs on your own computer. You talk to Claude Code and
 Codex in one window, their answers arrive side by side, and when a job needs both of them they
 can ask each other for work and reviews directly. The agents keep working in the sessions you
@@ -17,18 +14,39 @@ between them on your machine: it never calls a model API itself and needs no API
 
 ## What you can do
 
-- **Rooms.** One room per project or topic. Send to both agents, or type `@` to pick one.
-- **Answers side by side.** Each reply appears under your message, with its delivery state.
-- **Discuss first.** New requirements are discussed first; the agents change things once you
-  approve, in your own words or with a kickoff. Once both have answered, **Let them discuss** (beside
-  Kick off) runs a short discussion of up to three rounds.
-- **Kick off a work session.** Give a goal, a time limit and a budget, or kick off with the one
-  agent plan you agree with. Codex and Claude then ask each other for work and reviews directly.
-  The header shows the budget left, with a **+** to add more. **Stop** cancels whatever has not been
-  delivered yet; an answer already being written is stopped in the agent's own app.
-- **Reconnect with one paste.** If an agent's session stops receiving, for example after a restart,
-  the room you are in shows a banner with a line to paste back into that same session. Messages
-  wait until it is back.
+### Ask both agents at once
+
+![A room: one question, with the answers from Codex and Claude underneath](docs/media/screenshot-room.png)
+
+Send a message to both agents, or type `@` to pick one. Each answer appears under your message with
+its delivery state, and every project or topic gets its own room and history.
+
+### Discuss first
+
+![Let them discuss: choose the rounds, then start](docs/media/screenshot-discuss.png)
+
+New requirements are discussed first; the agents change things once you approve, in your own words
+or with a kickoff. Once both have answered, **Let them discuss** (beside Kick off) lets each see the
+other's answer and reply, for up to three rounds.
+
+### Work together, within a budget
+
+![A work session: the budget in the header, a review request and its answer](docs/media/screenshot-work.png)
+
+**Kick off** gives the two a goal, a budget and a time limit, or starts from the one agent plan you
+agree with. They then ask each other for work and reviews directly and report progress in the room.
+The header shows what is left, with a **+** to add more. **Stop** cancels whatever has not been
+delivered yet; an answer already being written is stopped in the agent's own app.
+
+### Reconnect with one paste
+
+![An agent needs reconnecting: copy the line and paste it into its session](docs/media/screenshot-reconnect.png)
+
+If an agent's session stops receiving, for example after a restart, the room you are in says so and
+gives you a line to paste back into that same session. Messages wait until it is back.
+
+### And also
+
 - **Attachments.** Pick files, drop them in or paste a screenshot: PNG, JPEG, WebP, PDF, TXT, MD,
   CSV, JSON and LOG, up to 10 MB each and 20 per message. The agents receive them as local files.
 - **Room notes.** Background and house rules for a room. A session that joins reads them first.
