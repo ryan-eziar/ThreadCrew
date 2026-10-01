@@ -34,6 +34,12 @@ the seat was taken or removed): copy the line again.
 During a work session, Codex is woken automatically only once that has been confirmed to work on
 your computer; until then it picks up work requests when it next checks in.
 
+To remove a member, open its menu and choose **Remove from room**. The confirmation includes
+unfinished collaborative work, even after the room was stopped. Removing the member does not
+stop execution in its original app or delete history. If work still holds the session, use
+**Work session → Release work session** after stopping it before joining that session elsewhere.
+If the room changes while the confirmation is open, review the refreshed warning and confirm again.
+
 What the member buttons say:
 
 | State | Meaning |

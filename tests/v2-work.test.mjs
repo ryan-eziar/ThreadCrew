@@ -46,6 +46,45 @@ async function fixture(t, options = {}) {
   return { broker, work, roomId, codex, claude, gate, begin, accept, request, handoff, runtimeDir };
 }
 
+for (const agent of ['codex','claude']) test(`removal of ${agent} warns about stopped and released work even without ordinary replies pending`, async t => {
+  const f=await fixture(t),started=await f.begin();
+  await f.accept(started,'codex');await f.accept(started,'claude','remove-work-claim');
+  await f.broker.stop(f.roomId,{operationId:op('stop-removal'),expectedGate:await f.gate()});
+  const member=async()=>(await f.broker.getControl(f.roomId)).members.find(m=>m.agent===agent);
+  let m=await member();
+  assert.equal(m.openWork.possibleRunning,0);
+  assert.equal(m.removalImpact.requiresAcknowledgement,true);
+  assert.equal(m.removalImpact.hasHeldWork,true);
+  assert.deepEqual(m.removalImpact.possibleRunningAgents,['codex','claude']);
+  const remove=ack=>f.broker.removeMember(f.roomId,agent,{operationId:op('remove'),expectedGate:awaitGate,
+    expectedBindingId:m.binding.id,expectedBindingVersion:m.binding.version,acknowledgePossibleRunning:ack});
+  let awaitGate=await f.gate();
+  await assert.rejects(remove(false),code('POSSIBLE_RUNNING_ACK_REQUIRED'));
+  assert.equal((await member()).binding.id,m.binding.id,'rejection leaves the binding in place');
+  const w=await f.work.get(f.roomId,started.work.id);
+  await f.work.release(f.roomId,w.id,{operationId:op('release'),expectedGate:await f.gate(),expectedWorkVersion:w.version,acknowledgePossibleRunning:true});
+  m=await member();awaitGate=await f.gate();
+  assert.equal(m.removalImpact.hasHeldWork,false);
+  assert.equal(m.removalImpact.requiresAcknowledgement,true,'release does not clear possible native execution');
+  await assert.rejects(remove(false),code('POSSIBLE_RUNNING_ACK_REQUIRED'));
+  await remove(true);
+  assert.equal((await member()).binding,null);
+  assert.equal((await member()).removalImpact,null);
+});
+
+test('held work without an accepted participant still requires a removal acknowledgement',async t=>{
+  const f=await fixture(t),initial=(await f.broker.getControl(f.roomId)).members[0];
+  assert.deepEqual(initial.removalImpact,{requiresAcknowledgement:false,possibleRunningAgents:[],hasHeldWork:false});
+  await f.begin();
+  await f.broker.stop(f.roomId,{operationId:op('stop-unaccepted'),expectedGate:await f.gate()});
+  const m=(await f.broker.getControl(f.roomId)).members.find(m=>m.agent==='claude');
+  assert.equal(m.removalImpact.hasHeldWork,true);
+  assert.equal(m.removalImpact.requiresAcknowledgement,true);
+  assert.deepEqual(m.removalImpact.possibleRunningAgents,[]);
+  await assert.rejects(f.broker.removeMember(f.roomId,'claude',{operationId:op('unconfirmed'),expectedGate:await f.gate(),
+    expectedBindingId:m.binding.id,expectedBindingVersion:m.binding.version}),code('POSSIBLE_RUNNING_ACK_REQUIRED'));
+});
+
 test('unread locator reaches unloaded replies and both completed work records, then clears with the read cursor', async t => {
   const f=await fixture(t);
   const summary=async()=>(await f.broker.listRooms()).rooms.find(r=>r.id===f.roomId);

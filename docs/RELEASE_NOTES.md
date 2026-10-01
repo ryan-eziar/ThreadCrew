@@ -2,6 +2,27 @@
 
 中文说明在每个版本的英文部分之后。
 
+## 0.3.2
+
+Remove a member with a clear warning about unfinished collaborative work.
+
+- **Removal includes work sessions.** The confirmation now covers work that is stopped but still
+  holds a session, and work that was released while an agent might still be running. Previously,
+  these cases could fail with `POSSIBLE_RUNNING_ACK_REQUIRED` after you confirmed removal.
+- **Fresh confirmation when state changes.** ThreadCrew checks the current member before showing
+  the dialog. If the room changes before removal, it asks you to review and confirm again.
+  Switching rooms or replacing the member cannot redirect your original removal action.
+- Removing a member does not stop execution in the original apps or delete history. A held work
+  session must still be released separately in its details before reusing the native session.
+- Update from 0.3.0 or 0.3.1 in **Settings → Updates**.
+
+**中文：** 移除成员时，正确确认未结束的协作任务。
+- 移除弹窗现在包含已经停止但仍占用会话的任务，以及已解除占用但成员可能仍在运行的任务，修复确认后仍报
+  `POSSIBLE_RUNNING_ACK_REQUIRED` 的问题。
+- 操作前读取最新状态；状态变化后要求重新确认。切换房间或更换成员不会让旧的确认误操作新对象。
+- 移出不会停止原生应用里的执行或删除记录。仍占用会话的任务，需要在详情中另行解除，才能复用该会话。
+- 从 0.3.0 或 0.3.1 可在 **设置 → 更新** 升级。
+
 ## 0.3.1
 
 Unread replies that clear as you read, and a way to find them.

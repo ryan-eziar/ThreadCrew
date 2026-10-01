@@ -10,7 +10,7 @@ can ask each other for work and reviews directly. The agents keep working in the
 already use, with their own tools, projects and permissions. ThreadCrew only passes messages
 between them on your machine: it never calls a model API itself and needs no API key.
 
-> Early release (0.3.1). Made for Windows 10 and 11; verified so far on Windows 11 with Node.js 22 and 24.
+> Early release (0.3.2). Made for Windows 10 and 11; verified so far on Windows 11 with Node.js 22 and 24.
 
 ## What you can do
 

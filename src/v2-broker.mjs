@@ -577,6 +577,7 @@ export class V2Broker extends EventEmitter {
       canReceiveCollaboration: false, collaborationReceiveMode: 'unverified', collaborationEvidenceAt: null,
       reason, evidenceAt: connection?.at ?? waiter?.armedAt ?? null, blockingDeliveryId: blocker?.id ?? null,
       wait, openWork: { queued: queued.n, possibleRunning: running.n },
+      removalImpact: binding ? await this.#removalImpact({sql,room},binding.id) : null,
       actions: { remove: allowed(binding ? null : 'NO_BINDING') },
       recoveryHint: binding && blocker ? { helperPath: resolve(this.projectDir,'chat.mjs'), runtimeDir: this.#runtimeDir,
         roomId: room.id, bindingId: binding.id, nativeSessionId: binding.native_session_id, agent,
@@ -1479,6 +1480,13 @@ export class V2Broker extends EventEmitter {
     return {text:null,fullTextAttachment:attachment,textSha256:attachment.sha256};
   }
 
+  async #removalImpact(ctx,bindingId,effects=null) {
+    effects ??= await this.#effectsWithWork(ctx,'binding_id=?',[bindingId]);
+    const held = await ctx.sql.get("SELECT id FROM work_sessions WHERE occupancy='held' AND (binding_codex=? OR binding_claude=?) LIMIT 1",[bindingId,bindingId]);
+    return { requiresAcknowledgement: Boolean(effects.possibleRunningCount || held),
+      possibleRunningAgents: effects.possibleRunningAgents, hasHeldWork: Boolean(held) };
+  }
+
   async removeMember(roomId,agent,input) {
     if (!AGENTS.includes(agent)) fail('INVALID_INPUT',400);
     fieldSet(input,['operationId','expectedGate','expectedBindingId','expectedBindingVersion','acknowledgePossibleRunning']);
@@ -1489,8 +1497,8 @@ export class V2Broker extends EventEmitter {
         const binding = await ctx.sql.get('SELECT * FROM bindings WHERE id=? AND room_id=? AND agent=? AND current=1',[bindingId,roomId,agent]);
         if (!binding || binding.version !== input.expectedBindingVersion) fail('BINDING_CHANGED');
         const possible = await this.#effectsWithWork(ctx,'binding_id=?',[binding.id]);
-        const heldWork = await ctx.sql.get("SELECT id FROM work_sessions WHERE occupancy='held' AND (binding_codex=? OR binding_claude=?) LIMIT 1",[binding.id,binding.id]);
-        if ((possible.possibleRunningCount || heldWork) && input.acknowledgePossibleRunning !== true) fail('POSSIBLE_RUNNING_ACK_REQUIRED');
+        const impact = await this.#removalImpact(ctx,binding.id,possible);
+        if (impact.requiresAcknowledgement && input.acknowledgePossibleRunning !== true) fail('POSSIBLE_RUNNING_ACK_REQUIRED');
         await this.#hooks.onBindingLeave?.(ctx,binding);
         const cancelledUnwrittenCount = await this.#cancelUnwritten(ctx,'binding_id=?',[binding.id],'MEMBER_LEFT');
         const exchange = await ctx.sql.get("SELECT * FROM exchanges WHERE room_id=? AND state='active' LIMIT 1",[roomId]);

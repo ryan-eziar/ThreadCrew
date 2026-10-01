@@ -206,6 +206,7 @@
     STATE_CONFLICT: t('状态已变化，请确认后再操作。'), GATE_CHANGED: t('状态已变化，请确认后再操作。'),
     DELIVERY_CHANGED: t('状态已变化，请确认后再操作。'), ROOM_CHANGED: t('群的信息刚变过，请确认后再操作。'),
     BINDING_CHANGED: t('成员刚变过，请确认后再操作。'), WORK_CHANGED: t('任务状态刚变过，请确认后再操作。'),
+    POSSIBLE_RUNNING_ACK_REQUIRED: t('还有可能在运行的工作，请查看最新状态并确认后再移出。'),
     FINAL_ALREADY_PRESENT: t('对方已经回复，不需要再操作。'),
     MEMBER_NOT_READY: t('有成员还不能接收。'), EXCHANGE_ACTIVE: t('已有讨论进行中。'),
     BASE_REPLY_INVALID: t('这两份回复不能用来讨论，请看最新状态。'), ROOM_STOPPED: t('已停止：先发一条新消息。'),
@@ -2632,18 +2633,44 @@
     runOp(rk('restore'), roomPath('/restore'), { operationId: uuid(), expectedRoomVersion: c.room.version });
   }
 
-  async function removeMember(m) {
-    const c = control();
-    const work = m.openWork || { queued: 0, possibleRunning: 0 };
-    const lines = [t('会话：{0}', m.binding.label)];
-    if (work.queued) lines.push(t('发给它、还在排队的 {0} 条会取消。', work.queued));
-    if (work.possibleRunning) lines.push(t('它还有 {0} 条可能在生成；移出不会停止它，回来会标迟到。', work.possibleRunning));
-    lines.push(t('移出不会关闭它的原会话，也不会删除聊天记录。'));
-    if (!(await askConfirm({ title: t('把 {0} 移出「{1}」？', NAMES[m.agent], c.room.name), body: lines, confirm: t('移出'), danger: true }))) return;
-    runOp(rk(`remove:${m.agent}`), roomPath(`/members/${m.agent}/remove`), {
-      operationId: uuid(), expectedGate: c.room.gate, expectedBindingId: m.binding.id,
-      expectedBindingVersion: m.binding.version, acknowledgePossibleRunning: work.possibleRunning > 0,
-    }, () => { st.panel = null; });
+  async function removeMember(original) {
+    const v = view();
+    if (!v || !original.binding) return;
+    const roomId = v.roomId, path = src.roomPath(roomId), bindingId = original.binding.id;
+    let changed = false;
+    // Refresh before each confirmation, and keep the write tied to the original
+    // room and binding even if navigation or an SSE update occurs meanwhile.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const fresh = await src.get(`${path}/control`);
+      if (view() !== v) return;
+      if (!fresh.ok) { flash(errorText(fresh.error.code), 'bad'); return; }
+      const c = fresh.result, m = c.members.find(member => member.agent === original.agent);
+      if (!m || !m.binding || m.binding.id !== bindingId) { flash(errorText('BINDING_CHANGED'), 'warn'); resyncRoom(v); return; }
+      if (!m.actions.remove.enabled) { flash(reasonText(m.actions.remove.reason), 'warn'); resyncRoom(v); return; }
+      const work = m.openWork || { queued: 0, possibleRunning: 0 };
+      // Older services have no removalImpact; their rejection still leads to a
+      // fresh, explicit warning and confirmation, never a silent forced retry.
+      const impact = m.removalImpact || { requiresAcknowledgement: work.possibleRunning > 0 || changed,
+        possibleRunningAgents: work.possibleRunning > 0 ? [m.agent] : [], hasHeldWork: false };
+      const lines = [t('会话：{0}', m.binding.label)];
+      if (changed) lines.push(t('房间状态已变化，请重新确认移出。'));
+      if (work.queued) lines.push(t('发给它、还在排队的 {0} 条会取消。', work.queued));
+      if (impact.hasHeldWork) lines.push(t('这个会话仍被协作任务占用。移出会停止相关任务的群内通信；任务占用需在详情中另行解除。'));
+      if (impact.requiresAcknowledgement) {
+        if (impact.possibleRunningAgents.length) lines.push(t('{0} 可能仍在执行相关工作。', impact.possibleRunningAgents.map(a => NAMES[a]).join(t('、'))));
+        lines.push(t('移出不会停止原生应用里的执行；之后回来的结果会标迟到，不再转发。'));
+      }
+      lines.push(t('移出不会关闭它的原会话，也不会删除聊天记录。'));
+      if (!(await askConfirm({ title: t('把 {0} 移出「{1}」？', NAMES[m.agent], c.room.name), body: lines, confirm: t('移出'), danger: true })) || view() !== v) return;
+      const res = await runOp(rk(`remove:${m.agent}`, roomId), `${path}/members/${m.agent}/remove`, {
+        operationId: uuid(), expectedGate: c.room.gate, expectedBindingId: bindingId,
+        expectedBindingVersion: m.binding.version, acknowledgePossibleRunning: impact.requiresAcknowledgement,
+      }, () => { if (view() === v) st.panel = null; });
+      if (!res || res.ok || res.error.outcome !== 'rejected'
+        || !['POSSIBLE_RUNNING_ACK_REQUIRED', 'GATE_CHANGED'].includes(res.error.code) || view() !== v) return;
+      changed = true;
+    }
+    resyncRoom(v);
   }
 
   // What the user pastes into a native session to bring it into this room: the exact join command
