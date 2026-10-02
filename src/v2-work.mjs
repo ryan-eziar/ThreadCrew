@@ -9,6 +9,8 @@ const agents = ['codex', 'claude'];
 const receiveModes = new Set(['unverified', 'next_step', 'next_turn', 'unavailable']);
 const canPush = mode => mode === 'next_step' || mode === 'next_turn';
 const active = w => ['active', 'paused_budget'].includes(w.coordinationState);
+const MAX_WORK_SECONDS = 86400;
+const MAX_ADD_SECONDS = 36000;
 const uid = prefix => `${prefix}-${randomUUID()}`;
 const json = JSON.stringify;
 const parse = row => row ? JSON.parse(row.data_json) : null;
@@ -101,7 +103,7 @@ export class WorkCoordinator {
     }
     w._possibleRunningAgents = (await this.summary(ctx.sql, w)).possibleRunningAgents;
     await ctx.sql.run(`INSERT INTO work_sessions(id,room_id,segment_id,version,occupancy,state,expires_at,binding_codex,binding_claude,data_json)
-      VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET version=excluded.version,occupancy=excluded.occupancy,state=excluded.state,data_json=excluded.data_json`,
+      VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET version=excluded.version,occupancy=excluded.occupancy,state=excluded.state,expires_at=excluded.expires_at,data_json=excluded.data_json`,
     [w.id,w.roomId,w.segmentId,w.version,w.occupancy,w.coordinationState,w.expiresAt,w.participants[0].bindingId,w.participants[1].bindingId,json(w)]);
     ctx.changes && (ctx.changes.catalog = true);
   }
@@ -126,8 +128,17 @@ export class WorkCoordinator {
     for (const row of kickoff) running.add(row.agent);
     result.possibleRunningAgents = agents.filter(a => running.has(a));
     result.needsHumanCount = w.participants.filter(p => p.workState === 'blocked').length;
-    const ended = !active(w) || Date.parse(w.expiresAt) <= this.clock();
-    result.actions = { addBudget: availability(ended ? 'WORK_NOT_ACTIVE' : null), release: availability(w.occupancy === 'released' ? 'WORK_RELEASED' : ['stopped','expired','completed'].includes(w.coordinationState) ? null : 'WORK_MUST_BE_STOPPED_FIRST') };
+    const ended = !active(w) || w.occupancy !== 'held' || Date.parse(w.expiresAt) <= this.clock();
+    result.timeBudget = {
+      limitSeconds: Math.round((Date.parse(w.expiresAt) - Date.parse(w.startedAt)) / 1000),
+      remainingSeconds: Math.max(0, Math.ceil((Date.parse(w.expiresAt) - this.clock()) / 1000)),
+      maxSeconds: MAX_WORK_SECONDS, maxAddSeconds: MAX_ADD_SECONDS
+    };
+    result.actions = {
+      addBudget: availability(ended ? 'WORK_NOT_ACTIVE' : null),
+      addTime: availability(ended ? 'WORK_NOT_ACTIVE' : result.timeBudget.limitSeconds >= MAX_WORK_SECONDS ? 'WORK_TIME_LIMIT' : null),
+      release: availability(w.occupancy === 'released' ? 'WORK_RELEASED' : ['stopped','expired','completed'].includes(w.coordinationState) ? null : 'WORK_MUST_BE_STOPPED_FIRST')
+    };
     for (const p of result.participants) {
       p.receiveMode = this.receiveModes[p.agent];
       const b = await sql.get('SELECT deadline_at FROM bindings WHERE id=?', [p.bindingId]);
@@ -176,16 +187,26 @@ export class WorkCoordinator {
       return { sourceHumanMessageId:source.messageId,work:await this.summary(ctx.sql,w),gate:source.gate };
   }
   async budget(roomId, workId, body) {
-    only(body,['operationId','expectedGate','expectedWorkVersion','addRequests','addWakes']);
-    boundedNumber(body.addRequests,0,10000); boundedNumber(body.addWakes,0,10000); if (!body.addRequests && !body.addWakes) reject('INVALID_INPUT',400);
-    return this.broker.mutate(`work.budget:${workId}`,roomId,body,async ctx=>{
+    only(body,['operationId','expectedGate','expectedWorkVersion','addRequests','addWakes','addSeconds']);
+    const addRequests = body.addRequests === undefined ? 0 : body.addRequests,
+      addWakes = body.addWakes === undefined ? 0 : body.addWakes,
+      addSeconds = body.addSeconds === undefined ? 0 : body.addSeconds;
+    boundedNumber(addRequests,0,10000); boundedNumber(addWakes,0,10000); boundedNumber(addSeconds,0,MAX_ADD_SECONDS);
+    if (!addRequests && !addWakes && !addSeconds) reject('INVALID_INPUT',400);
+    const result = await this.broker.mutate(`work.budget:${workId}`,roomId,body,async ctx=>{
       const w=await this.load(ctx.sql,roomId,workId); await this.requireActive(ctx,w);
       if(w.version!==body.expectedWorkVersion) reject('WORK_CHANGED');
-      boundedNumber(w.requestBudget.limit+body.addRequests,1,10000); boundedNumber(w.wakeBudget.limit+body.addWakes,0,10000);
-      w.requestBudget.limit+=body.addRequests; w.wakeBudget.limit+=body.addWakes;
-      await this.event(ctx,w,'budget_changed','ryan',await ctx.createContent(`Added ${body.addRequests} requests and ${body.addWakes} wakes`));
+      boundedNumber(w.requestBudget.limit+addRequests,1,10000); boundedNumber(w.wakeBudget.limit+addWakes,0,10000);
+      if (addSeconds && Date.parse(w.expiresAt) + addSeconds * 1000 > Date.parse(w.startedAt) + MAX_WORK_SECONDS * 1000) reject('WORK_TIME_LIMIT');
+      w.requestBudget.limit+=addRequests; w.wakeBudget.limit+=addWakes;
+      if (addSeconds) w.expiresAt = new Date(Date.parse(w.expiresAt) + addSeconds * 1000).toISOString();
+      const text = addSeconds ? `Added ${addRequests} requests, ${addWakes} wakes and ${addSeconds} seconds; ends at ${w.expiresAt}`
+        : `Added ${addRequests} requests and ${addWakes} wakes`;
+      await this.event(ctx,w,'budget_changed','ryan',await ctx.createContent(text),{addRequests,addWakes,addSeconds,expiresAt:w.expiresAt});
       await this.saveWork(ctx,w); return {work:await this.summary(ctx.sql,w)};
     });
+    // Reschedule even after an idempotent retry: the stored expiry is authoritative.
+    this.armExpiry(await this.get(roomId, workId)); return result;
   }
   async release(roomId,workId,body) {
     only(body,['operationId','expectedGate','expectedWorkVersion','acknowledgePossibleRunning']);
@@ -205,6 +226,7 @@ export class WorkCoordinator {
   requestPublic(w,r) {
     const value=publicOnly(r);
     delete value.finalReplyId;
+    value.deliveryBlockedReason=r.requestState==='queued'&&!['stopped','expired','completed'].includes(w.coordinationState)?r._routingBlockedReason??null:null;
     value.references??=[];value.responseDelivery=null;
     const final=Boolean(r.finalReplyId), stopped=!active(w)||w.occupancy!=='held'||Date.parse(w.expiresAt)<=this.clock();
     value.actions={abandon:availability(final?'FINAL_ALREADY_PRESENT':r.waitDisposition==='waiting'&&['claimed','awaiting_response','uncertain'].includes(r.requestState)?null:'REQUEST_NOT_WAITING'),resend:availability(final?'FINAL_ALREADY_PRESENT':stopped?'WORK_NOT_ACTIVE':w.requestBudget.remaining<=0?'REQUEST_BUDGET_EXHAUSTED':(['failed','uncertain'].includes(r.requestState)||r.waitDisposition==='abandoned')?null:'AWAITING_RESPONSE')};
@@ -309,6 +331,7 @@ export class WorkCoordinator {
         for(const row of rows){const r=parse(row);if(body.requestId&&r.requestId!==body.requestId)continue;const isResponse=r._fromBindingId===bindingId;
           const payload=await this.deliveryContent(ctx.sql,roomId,r,isResponse);
           const bytes=Buffer.byteLength(json(payload))+8192;if(claimedBytes+bytes>256*1024)break;claimedBytes+=bytes;
+          r._routingBlockedReason=null;r._routingBlockedAt=null;
           if(isResponse){r._responseState='claimed';r._responseClaimId=uid('claim');r._responseReason=null;r._responseNativeAttempt=false;}else{r.requestState='claimed';r.waitDisposition='waiting';r.waitingSince??=ctx.now;r._claimId=uid('claim');r._nativeAttempt=false;}
           await this.saveRequest(ctx,r);claimed.push({kind:isResponse?'response':'request',roomId,workId,requestId:r.requestId,requestNumber:r.requestNumber,claimId:isResponse?r._responseClaimId:r._claimId,origin:isResponse?r.recipient:r.author,...payload,reviewRef:r._reviewRef??null});
         }
@@ -374,12 +397,25 @@ export class WorkCoordinator {
     const timer=setTimeout(()=>{this.attentionTimers.delete(roomId);if(!this.closed)void this.broker.mutate('work.attentionTick',roomId,{operationId:uid('op')},async()=>({}),{gate:false}).catch(()=>{});},Math.max(1,Date.parse(next.since)+30*60*1000-this.clock()));
     timer.unref?.();this.attentionTimers.set(roomId,timer);
   }
-  armExpiry(w){if(!active(w)||w.occupancy!=='held')return;this.clearExpiry(w.id);const timer=setTimeout(()=>{void this.broker.mutate(`work.expire:${w.id}`,w.roomId,{operationId:`expiry-${w.id}`},ctx=>this.stopWork(ctx,'expired'),{gate:false}).catch(()=>{});},Math.max(1,Date.parse(w.expiresAt)-this.clock()));timer.unref?.();this.timers.set(w.id,timer);}
+  armExpiry(w){
+    if(!active(w)||w.occupancy!=='held')return;
+    this.clearExpiry(w.id);
+    const timer=setTimeout(()=>{void this.expireAt(w).catch(()=>{});},Math.max(1,Date.parse(w.expiresAt)-this.clock()));
+    timer.unref?.();this.timers.set(w.id,timer);
+  }
+  async expireAt(expected){
+    return this.broker.mutate(`work.expire:${expected.id}`,expected.roomId,
+      {operationId:`expiry-${expected.id}-${hash(expected.expiresAt).slice(0,12)}`},async ctx=>{
+        const w=await this.load(ctx.sql,expected.roomId,expected.id);
+        if(w.expiresAt!==expected.expiresAt||Date.parse(w.expiresAt)>this.clock()||!active(w)||w.occupancy!=='held')return{};
+        return this.stopWork(ctx,'expired');
+      },{gate:false});
+  }
   async waitChanged(roomId,bindingId,info){
     const exists=await this.broker.store.read(sql=>this.current(sql,roomId));if(!exists||!exists.participants.some(p=>p.bindingId===bindingId)||!active(exists))return;
     return this.broker.mutate('work.waitEvidence',roomId,{operationId:uid('op')},async ctx=>{
       const w=await this.current(ctx.sql,roomId);if(!w||!active(w))return{};const p=this.participant(w,bindingId);if(p.agent!=='claude')return{};
-      p.inboxWait=info.workId===w.id&&info.notificationScopes?.includes('work')&&['armed','notified'].includes(info.state)?info.state:'not_armed';p.inboxWaitAt=p.inboxWait==='not_armed'?null:info.at;p.version++;await this.saveWork(ctx,w);return{};
+      p.inboxWait=info.workId===w.id&&info.notificationScopes?.includes('work')&&['armed','notified','rearming'].includes(info.state)?info.state:'not_armed';p.inboxWaitAt=p.inboxWait==='not_armed'?null:info.at;p.version++;await this.saveWork(ctx,w);return{};
     },{gate:false});
   }
   async nextNotification({roomId,bindingId,notificationScopes,workId}){
@@ -402,13 +438,16 @@ export class WorkCoordinator {
   }
   async projectControl(sql,roomId,control){const w=await this.current(sql,roomId);control.currentWork=w?await this.summary(sql,w):null;control.pendingKickoff=await pendingKickoff(sql,await sql.get('SELECT * FROM rooms WHERE id=?',[roomId]));const effects=await this.effects(sql,roomId,control);control.possibleRunningCount=effects.possibleRunningCount;control.possibleRunningAgents=effects.possibleRunningAgents;return control;}
   async projectMember(sql,roomId,member){
-    member.canReceiveCollaboration=false;member.collaborationReceiveMode='unverified';member.collaborationEvidenceAt=null;
+    member.canReceiveCollaboration=false;member.collaborationReceiveMode='unverified';member.collaborationEvidenceAt=null;member.workInboxActive=false;
     const w=await this.current(sql,roomId);if(!w||!member.binding)return member;const p=w.participants.find(p=>p.bindingId===member.binding.id);if(!p)return member;
     if(p.acceptance==='accepted'&&!['completed','stopped'].includes(p.workState)&&!['recovery_required','disconnected'].includes(member.state))member.state='busy';
     if(!active(w)||Date.parse(w.expiresAt)<=this.clock()){member.collaborationReceiveMode='unavailable';return member;}
-    const armed=member.wait?.state==='armed'&&member.wait.workId===w.id&&member.wait.notificationScopes?.includes('work')&&Date.parse(member.wait.deadlineAt)>this.clock();
+    member.workInboxActive=true;
+    const armed=['armed','rearming'].includes(member.wait?.state)&&member.wait.workId===w.id&&member.wait.notificationScopes?.includes('work')&&Date.parse(member.wait.deadlineAt)>this.clock();
+    const blocked=p.agent==='codex'?await sql.get("SELECT id FROM work_requests WHERE work_id=? AND json_extract(data_json,'$._routingBlockedReason')='NATIVE_UNAVAILABLE' AND ((to_binding_id=? AND state='queued') OR (json_extract(data_json,'$._fromBindingId')=? AND json_extract(data_json,'$._responseState')='queued')) LIMIT 1",[w.id,p.bindingId,p.bindingId]):null;
+    if(blocked){member.state='disconnected';member.reason='NO_CONNECTION';}
     member.collaborationReceiveMode=p.agent==='claude'?(armed?'background_wait':'checkpoint'):canPush(this.receiveModes.codex)?'native_push':this.receiveModes.codex;
-    member.canReceiveCollaboration=p.agent==='claude'?armed:canPush(this.receiveModes.codex)&&Boolean(this.transport);
+    member.canReceiveCollaboration=p.agent==='claude'?armed:canPush(this.receiveModes.codex)&&Boolean(this.transport)&&!['disconnected','recovery_required'].includes(member.state);
     member.collaborationEvidenceAt=armed?p.inboxWaitAt:member.evidenceAt??null;return member;
   }
   async projectTimeline(sql,roomId,entry){
@@ -417,7 +456,7 @@ export class WorkCoordinator {
     const data=entry.work??entry.system?.data??entry.data;
     if(!data?.workId)return entry;
     if(data.eventKind==='request'){const w=await this.load(sql,roomId,data.workId);const r=await this.request(sql,w,data.requestId);entry.work=this.requestPublic(w,r);}
-    else if(data.eventKind==='response'){const w=await this.load(sql,roomId,data.workId),r=await this.request(sql,w,data.requestId);entry.work={...data,responseDelivery:{state:r._responseState,reason:r._responseReason??null,receivedAt:r._responseReceivedAt??null}};}
+    else if(data.eventKind==='response'){const w=await this.load(sql,roomId,data.workId),r=await this.request(sql,w,data.requestId);entry.work={...data,responseDelivery:{state:r._responseState,reason:r._responseReason??null,receivedAt:r._responseReceivedAt??null,blockedReason:r._responseState==='queued'?r._routingBlockedReason??null:null}};}
     else entry.work=data;
     entry.message=null;entry.reply=null;entry.system=null;entry.deliveries=[];return entry;
   }
@@ -440,6 +479,11 @@ export class WorkCoordinator {
     if(w.coordinationState==='paused_budget')items.push({id:`budget-${w.id}`,kind:'work_budget',...ref,reason:'WORK_BUDGET_EXHAUSTED'});
     if(w.coordinationState==='expired')items.push({id:`expired-${w.id}`,kind:'work_expired',...ref,reason:'WORK_EXPIRED'});
     for(const p of w.participants.filter(p=>p.workState==='blocked'))items.push({id:`blocked-${w.id}-${p.agent}`,kind:'work_blocked',...ref,agent:p.agent,bindingId:p.bindingId,reason:'WORK_BLOCKED'});
+    if(active(w)&&Date.parse(w.expiresAt)>this.clock()){
+      const blocked=await sql.all("SELECT * FROM work_requests WHERE work_id=? AND json_extract(data_json,'$._routingBlockedReason') IS NOT NULL AND (state='queued' OR json_extract(data_json,'$._responseState')='queued')",[w.id]);
+      for(const row of blocked){const r=parse(row),response=r._responseState==='queued',itemId=response?r._responseTimelineId:r._timelineId;
+        items.push({id:`routing-${r.requestId}`,kind:'work_receive_unavailable',...ref,requestId:r.requestId,agent:response?r.author:r.recipient,bindingId:response?r._fromBindingId:r._toBindingId,timelineItemId:itemId,aroundCursor:await this.around(sql,roomId,itemId),since:r._routingBlockedAt??w.startedAt,reason:r._routingBlockedReason});}
+    }
     const cutoff=new Date(this.clock()-30*60*1000).toISOString();
     const since="COALESCE(json_extract(data_json,'$.waitingSince'),?)";
     const condition=after?`AND (${since}>? OR (${since}=? AND ('request-'||id)>?))`:'';
@@ -452,10 +496,24 @@ export class WorkCoordinator {
     const w=await this.current(sql,roomId);if(!w)return 0;
     const cutoff=new Date(this.clock()-30*60*1000).toISOString();
     const requests=await sql.get("SELECT COUNT(*) AS n FROM work_requests WHERE work_id=? AND wait_disposition!='abandoned' AND (state IN ('uncertain','failed') OR (state IN ('claimed','awaiting_response') AND json_extract(data_json,'$.waitingSince')<=?) OR json_extract(data_json,'$._responseState') IN ('uncertain','failed'))",[w.id,cutoff]);
-    return requests.n+Number(['paused_budget','expired'].includes(w.coordinationState))+w.participants.filter(p=>p.workState==='blocked').length;
+    const blocked=active(w)&&Date.parse(w.expiresAt)>this.clock()?await sql.get("SELECT COUNT(*) AS n FROM work_requests WHERE work_id=? AND json_extract(data_json,'$._routingBlockedReason') IS NOT NULL AND (state='queued' OR json_extract(data_json,'$._responseState')='queued')",[w.id]):{n:0};
+    return requests.n+blocked.n+Number(['paused_budget','expired'].includes(w.coordinationState))+w.participants.filter(p=>p.workState==='blocked').length;
+  }
+  async markNativeBlocked(roomId,candidate,reason){
+    const prior=await this.broker.store.read(sql=>sql.get('SELECT data_json FROM work_requests WHERE id=? AND work_id=?',[candidate.requestId,candidate.workId]));
+    if(prior&&JSON.parse(prior.data_json)._routingBlockedReason===reason)return;
+    await this.broker.mutate('work.routingBlocked',roomId,{operationId:uid('op')},async ctx=>{
+      const w=await this.load(ctx.sql,roomId,candidate.workId),r=await this.request(ctx.sql,w,candidate.requestId);
+      if(!active(w)||Date.parse(w.expiresAt)<=this.clock()||!((r._toBindingId===candidate.bindingId&&r.requestState==='queued')||(r._fromBindingId===candidate.bindingId&&r._responseState==='queued')))return{};
+      r._routingBlockedReason=reason;r._routingBlockedAt=ctx.now;await this.saveRequest(ctx,r);return{};
+    },{gate:false});
+  }
+  async flushQueuedNative(){
+    const rooms=await this.broker.store.read(sql=>sql.all("SELECT room_id FROM work_sessions WHERE occupancy='held' AND state IN ('active','paused_budget')"));
+    for(const row of rooms)await this.flushNative(row.room_id);
   }
   flushNative(roomId){
-    // Real busy-turn capability must be established before enabling this route.
+    // Native delivery and same-turn timing are separate capabilities.
     if(this.closed||!this.transport?.sendWork||(!this.codexReceiveModeProvider&&!canPush(this.receiveModes.codex)))return Promise.resolve();
     if(this.flushing.has(roomId))return this.flushing.get(roomId);
     const task=this.drainNative(roomId).finally(()=>this.flushing.delete(roomId));
@@ -464,7 +522,7 @@ export class WorkCoordinator {
   async drainNative(roomId){
     // Each pass consumes only a newly queued item; failed/uncertain writes are never retried.
     while(!this.closed){
-      const candidate=await this.broker.store.read(async sql=>{const w=await this.current(sql,roomId);if(!w||!active(w)||w.wakeBudget.remaining<=0)return null;const p=w.participants.find(p=>p.agent==='codex');const row=await sql.get("SELECT * FROM work_requests WHERE work_id=? AND ((to_binding_id=? AND state='queued') OR (json_extract(data_json,'$._fromBindingId')=? AND json_extract(data_json,'$._responseState')='queued')) ORDER BY request_number LIMIT 1",[w.id,p.bindingId,p.bindingId]);return row?{workId:w.id,requestId:row.id,bindingId:p.bindingId}:null;});
+      const candidate=await this.broker.store.read(async sql=>{const w=await this.current(sql,roomId);if(!w||!active(w)||Date.parse(w.expiresAt)<=this.clock()||w.wakeBudget.remaining<=0)return null;const p=w.participants.find(p=>p.agent==='codex');const row=await sql.get("SELECT * FROM work_requests WHERE work_id=? AND ((to_binding_id=? AND state='queued') OR (json_extract(data_json,'$._fromBindingId')=? AND json_extract(data_json,'$._responseState')='queued')) ORDER BY request_number LIMIT 1",[w.id,p.bindingId,p.bindingId]);return row?{workId:w.id,requestId:row.id,bindingId:p.bindingId,nativeSessionId:p.nativeSessionId}:null;});
       if(!candidate)return;
       if(this.codexReceiveModeProvider){
         let mode='unverified';
@@ -474,8 +532,18 @@ export class WorkCoordinator {
           this.receiveModes.codex=mode;
           await this.broker.mutate('work.receiveCapability',roomId,{operationId:uid('op')},async()=>({codexReceiveMode:mode}),{gate:false});
         }
-        if(!canPush(mode))return;
+        if(!canPush(mode)){await this.markNativeBlocked(roomId,candidate,'NATIVE_RECEIVE_UNVERIFIED');return;}
       }
+      // This read-only check spends no wake and invokes no model. A later room
+      // event or explicit reconnect retries the original queued item, never a
+      // message whose write outcome is uncertain.
+      if(this.transport.probe){
+        let available=false;try{available=(await this.transport.probe({nativeSessionId:candidate.nativeSessionId})).available===true;}catch{}
+        if(this.closed)return;
+        await this.broker.recordNativeConnection(candidate.bindingId,candidate.nativeSessionId,available);
+        if(!available){await this.markNativeBlocked(roomId,candidate,'NATIVE_UNAVAILABLE');return;}
+      }
+      if(this.closed)return;
       const claimed=await this.broker.mutate(`work.nativeClaim:${candidate.requestId}`,roomId,{operationId:uid('op')},async ctx=>{
         const w=await this.load(ctx.sql,roomId,candidate.workId);await this.requireActive(ctx,w,candidate.bindingId);if(w.wakeBudget.remaining<=0)return{delivery:null};
         const r=await this.request(ctx.sql,w,candidate.requestId),p=this.participant(w,candidate.bindingId),isResponse=r._fromBindingId===p.bindingId;
@@ -488,6 +556,7 @@ export class WorkCoordinator {
           else{r.requestState='failed';r._failureReason=reason;}
           await this.saveRequest(ctx,r);await this.saveWork(ctx,w);return{delivery:null};
         }
+        r._routingBlockedReason=null;r._routingBlockedAt=null;
         const claimId=uid('claim');if(isResponse){r._responseState='claimed';r._responseClaimId=claimId;r._responseNativeAttempt=true;}else{r.requestState='claimed';r._claimId=claimId;r._nativeAttempt=true;r.waitDisposition='waiting';r.waitingSince??=ctx.now;}
         w.wakeBudget.used++;await this.saveRequest(ctx,r);await this.saveWork(ctx,w);
         return{delivery:{id:isResponse?r.finalReplyId:r.requestId,roomId,workId:w.id,requestId:r.requestId,claimId,kind:isResponse?'response':'request',requestNumber:r.requestNumber,reviewRef:r._reviewRef??null,bindingId:p.bindingId,nativeSessionId:p.nativeSessionId,segmentId:w.segmentId,origin:isResponse?r.recipient:r.author,expiresAt:w.expiresAt,mode:'work',authorizedScope:await workAuthorization(ctx.sql,roomId,w.id),...payload}};

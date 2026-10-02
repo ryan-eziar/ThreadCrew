@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
-import { loadNativeReceiveProof } from '../src/native-receive-proof.mjs';
+import { loadNativeReceiveProof, loadNativeDeliveryCapability } from '../src/native-receive-proof.mjs';
 
 const projectDir = resolve(import.meta.dirname, '..');
 const root = join(projectDir, 'work', 'native-receive-proof-tests');
@@ -19,9 +19,24 @@ async function fixture() {
   return { options, proof, save };
 }
 
-test('missing proof never enables native work push', async () => {
+test('missing proof never claims same-turn receipt', async () => {
   const f = await fixture();
   assert.equal((await loadNativeReceiveProof(f.options)).codexReceiveMode, 'unverified');
+});
+
+test('missing or invalidated timing evidence keeps native message delivery without claiming same-turn receipt', async () => {
+  const f = await fixture();
+  for (const expected of ['PROOF_MISSING', 'DESKTOP_VERSION_CHANGED', 'TRANSPORT_CHANGED']) {
+    if (expected === 'DESKTOP_VERSION_CHANGED') await f.save({ ...f.proof, desktopVersion: '26.923.1.0' });
+    if (expected === 'TRANSPORT_CHANGED') await f.save({ ...f.proof, transportSha256: '0'.repeat(64) });
+    const capability = await loadNativeDeliveryCapability(f.options);
+    assert.equal(capability.codexReceiveMode, 'next_turn');
+    assert.equal(capability.timingProofReason, expected);
+    assert.equal(capability.verifiedAt, null);
+    assert.equal((await loadNativeReceiveProof(f.options)).codexReceiveMode, 'unverified');
+  }
+  await f.save(f.proof);
+  assert.equal((await loadNativeDeliveryCapability(f.options)).codexReceiveMode, 'next_step');
 });
 test('completed same-turn acceptance permits next_step only for the verified Desktop and adapter', async () => {
   const f = await fixture(); await f.save(f.proof);

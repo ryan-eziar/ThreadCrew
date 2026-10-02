@@ -2,6 +2,51 @@
 
 中文说明在每个版本的英文部分之后。
 
+## 0.3.3
+
+Claude keeps receiving under Claude Code's time limit, work sessions can get more time, and direct
+messages coordinate the agents.
+
+- **Claude stays in the room.** With its default settings, Claude Code now stops a background
+  command after two hours at most. Claude's wait ends by itself just before that, and the join,
+  reconnect and resume lines tell Claude to start a new one at once, without asking you. While a
+  room is quiet, Claude's session wakes for one short turn about every two hours. These brief wakes
+  consume Claude usage; the amount depends on conversation length and caching. Before, Claude could
+  stop receiving after 30 minutes to 2 hours of quiet, or stop to ask you.
+- **Stopped rooms keep Claude reachable.** A stopped room accepts Claude's wait, and offers
+  **Copy reconnect line** for a member who needs it. Before, you had to send a message first.
+- **More time for a work session.** **Time left** sits beside the requests and wake-ups in the
+  header. Its **+** adds an hour; the work panel offers 1, 2 or 5 more hours, up to 24 hours in all.
+- **The agents talk with messages.** During a work session they tell each other things only with
+  requests and answers, which are delivered to the other agent. A status change shows in the room but
+  wakes no one, so each hands its finished part over with a request before marking itself completed.
+- **Work requests still reach Codex after a Codex update.** An update of the Codex desktop app or
+  its adapter could stop work requests from being delivered to Codex at all. Now they are still
+  delivered; only the promise to reach Codex in the middle of a reply depends on the latest check. If
+  Codex can't receive, the request stays queued, the room asks for your attention and offers
+  Codex's reconnect line.
+- A Claude session that joined before this update hasn't seen the new instruction. If it stops to
+  ask whether to wait again, tell it to rearm its ThreadCrew wait without asking.
+- Update from 0.3.0 or later in **Settings → Updates**.
+
+**中文：** Claude 在 Claude Code 的时间限制下照样收消息，开工可以加时间，两位代理之间直接用消息协调。
+- **Claude 一直在群里**：按默认设置，Claude Code 的后台命令现在最长运行 2 小时。Claude 的等待会在这之前
+  自己结束；进群、重连和恢复口令都告诉 Claude 马上重新挂上，不用问你。群里没动静时，Claude 的会话大约
+  每 2 小时醒来一个很短的回合。这些短暂的唤醒会消耗 Claude 用量，多少取决于对话长度和缓存。以前，群里
+  安静 30 分钟到 2 小时后，Claude 可能就收不到消息，或者停下来问你。
+- **停止的群里也能找到 Claude**：停止的群接受 Claude 的等待，需要时也提供 **复制重连口令**。以前要先发一条
+  消息才行。
+- **开工可以加时间**：顶栏在请求和唤醒旁边显示 **时间余量**，它的 **＋** 加 1 小时；协作任务面板里可以选加
+  1、2 或 5 小时，一项任务总共最多 24 小时。
+- **代理之间用消息交流**：开工期间，它们只用请求和答复互相传话，这两种会送到对方那里。状态变化会显示在
+  群里，但不会唤醒任何一方，所以每位做完自己的部分，会先用一个请求交给对方，再标记完成。
+- **Codex 更新后照样收到协作请求**：以前 Codex 桌面应用或它的适配器更新后，协作请求可能完全送不到 Codex。
+  现在照样送达，只有"在回复中途也能收到"要看最新的检查结果。Codex 收不到时，请求留在队列里，群里会提示你
+  处理，并给出 Codex 的重连口令。
+- 更新前就进群的 Claude 会话没看过新的说明。如果它停下来问要不要继续等，告诉它不用问，直接重挂 ThreadCrew
+  的等待。
+- 从 0.3.0 及以后的版本，可在 **设置 → 更新** 升级。
+
 ## 0.3.2
 
 Remove a member with a clear warning about unfinished collaborative work.

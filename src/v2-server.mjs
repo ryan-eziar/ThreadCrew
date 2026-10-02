@@ -283,7 +283,7 @@ export async function createV2Server({ broker, work = null, runtimeDir, projectD
         if (work && endpoint[0] === 'work') {
           if (endpoint.length === 1) return response(res, await work.start(roomId, await humanPost(['operationId', 'expectedGate', 'expectedBindings', 'text', 'attachmentIds', 'objective', 'requestLimit', 'wakeLimit', 'durationSeconds'])));
           const workId = identifier(endpoint[1]);
-          if (endpoint.length === 3 && endpoint[2] === 'budget') return response(res, await work.budget(roomId, workId, await humanPost(['operationId', 'expectedGate', 'expectedWorkVersion', 'addRequests', 'addWakes'])));
+          if (endpoint.length === 3 && endpoint[2] === 'budget') return response(res, await work.budget(roomId, workId, await humanPost(['operationId', 'expectedGate', 'expectedWorkVersion', 'addRequests', 'addWakes', 'addSeconds'], ['operationId', 'expectedGate', 'expectedWorkVersion'])));
           if (endpoint.length === 3 && endpoint[2] === 'release') return response(res, await work.release(roomId, workId, await humanPost(['operationId', 'expectedGate', 'expectedWorkVersion', 'acknowledgePossibleRunning'])));
           if (endpoint.length === 5 && endpoint[2] === 'requests' && ['abandon', 'resend'].includes(endpoint[4])) {
             const action = endpoint[4], keys = action === 'abandon' ? ['operationId', 'expectedRequestVersion'] : ['operationId', 'expectedGate', 'expectedRequestVersion', 'acknowledgeDuplicateRisk'];
@@ -346,7 +346,7 @@ export async function createV2Server({ broker, work = null, runtimeDir, projectD
           return response(res,scoped(await work.confirmStart(roomId,b.bindingId,body),b));
         }
         if (parts.length === 5 && action === 'wait') {
-          fields(body, ['requestId', 'workId', 'notificationScopes'], ['requestId']); identifier(body.requestId);
+          fields(body, ['requestId', 'workId', 'notificationScopes', 'windowMs'], ['requestId']); identifier(body.requestId);
           const controller = new AbortController(); aborts.add(controller);
           const disconnect = () => { if (!res.writableEnded) controller.abort(); }; res.on('close', disconnect);
           try { return response(res, scoped(await broker.wait(roomId, b.bindingId, { ...body, signal: controller.signal }), b)); }

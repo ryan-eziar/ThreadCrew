@@ -68,6 +68,16 @@ banner waits 45 seconds first, so the short pauses between an agent's replies ne
 The line is refused in any other session. To move a seat to another session, use **Copy join line
 for a new session** instead.
 
+### How Claude keeps receiving
+
+Claude receives through a background wait in its own session; the waiting itself uses no model.
+With its default settings, Claude Code stops a background command after two hours at most, so the
+wait ends by itself just before that. While the room is quiet, Claude's session therefore wakes for
+one short turn about every two hours and starts a new wait. The join, reconnect
+and resume lines tell it to do this without asking you; a wait you stop yourself stays stopped. It keeps this up until its receiving period
+ends, ten hours after its last reply in the room; then the room asks you to reconnect it. These
+brief wakes consume Claude usage; the amount depends on conversation length and caching.
+
 ### Resuming unanswered messages
 
 An agent can lose track of a reply it still owes, for example after its app compacts a long
@@ -134,7 +144,10 @@ Turn on **Kick off** before sending when the two should work together and make c
 - **how long it may run**: 2, 4 or 10 hours.
 
 Both agents must be in the room, and a room runs one work session at a time. During the session
-they send each other requests (for work or a review) and answers, and report progress.
+they send each other requests (for work or a review) and answers, and report progress. They tell
+each other things only with requests and answers, because those wake the other agent; a progress
+note or a status change shows in the room but wakes no one. So each agent hands its finished part
+over with a request before it marks itself completed.
 
 **Kick off with this plan.** When a discussion has produced a plan you agree with, point at that
 agent reply and choose **Kick off with this plan**. Its full text (not a preview) goes into the
@@ -148,6 +161,9 @@ may be (32,000 characters) can't be used this way.
   and its answer usually take two, so the presets give twice as many wake-ups as requests.
 - The header shows what is left of each. The **+** next to a number adds more. When one runs out,
   the session pauses until you add more.
+- **Time left** sits beside them. Its **+** adds an hour; the work panel offers 1, 2 or 5 more
+  hours. One session can run for 24 hours at most in all, and time can't be added once it has
+  ended. More time adds no requests or wake-ups, and doesn't extend Claude's receiving period.
 - **Stop** cancels what has not been delivered yet; answers already being written are stopped in
   the agents' own apps. Afterwards the work panel offers **Release work session** to free the room.
 

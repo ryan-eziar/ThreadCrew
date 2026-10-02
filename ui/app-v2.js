@@ -27,6 +27,7 @@
   // work session used 10 requests and 18 wake-ups, and wake-ups ran out first.
   const PRESETS = { small: [12, 24, t('小')], standard: [24, 48, t('标准')], large: [48, 96, t('大')] };
   const BUDGET_STEP = { requests: 12, wakes: 24 }; // one "+" in the header or the work popover
+  const TIME_STEPS_H = [1, 2, 5]; // the work popover's "more time" choices; the header "+" adds the first
   // Files the broker accepts, by extension; it checks the type against the name and the content.
   const UPLOAD_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', pdf: 'application/pdf',
     txt: 'text/plain', log: 'text/plain', md: 'text/markdown', csv: 'text/csv', json: 'application/json' };
@@ -104,6 +105,7 @@
     note: ['M5 4h14v16H5z', 'M8.5 9h7', 'M8.5 13h7', 'M8.5 17h4'],
     sun: ['M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z', 'M12 2.5v2', 'M12 19.5v2', 'M4.6 4.6l1.4 1.4', 'M18 18l1.4 1.4', 'M2.5 12h2', 'M19.5 12h2', 'M4.6 19.4 6 18', 'M18 6l1.4-1.4'],
     moon: ['M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z'],
+    clock: ['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z', 'M12 7.5V12l3 2'],
   };
   function icon(name, size = 16) {
     const NS = 'http://www.w3.org/2000/svg';
@@ -221,6 +223,7 @@
     UPDATE_STATE_UNREADABLE: t('读不到更新记录。'),
     ROOM_ARCHIVED: t('这个群已归档，不能再收发。'), WORK_IN_PROGRESS: t('本群已有进行中的任务。'),
     WORK_MUST_BE_STOPPED_FIRST: t('先停止本群，才能解除这项任务。'), WORK_NOT_ACTIVE: t('这项任务已经不在进行中。'),
+    WORK_TIME_LIMIT: t('这项任务已到总时长上限，不能再延长。'),
     DUPLICATE_ACK_REQUIRED: t('需要先确认可能重复。'), ATTACHMENT_CHANGED: t('附件被改动过，已停止读取。'),
     CONTENT_TOO_LARGE: t('内容太长（上限 32,000 字），已保留输入。'), RESPONSE_TOO_LARGE: t('返回内容过大，请缩小范围。'),
     JOURNAL_UNSAFE: t('broker 需要恢复，所有操作已暂停。'), RECOVERY_REQUIRED: t('broker 需要恢复，所有操作已暂停。'),
@@ -241,21 +244,23 @@
       RECOVERY_REQUIRED: t('broker 需要恢复'), JOURNAL_UNSAFE: t('broker 需要恢复'), ROOM_OPEN: t('群没有归档'),
       ROOM_ARCHIVED: t('群已归档'), WORK_IN_PROGRESS: t('本群已有进行中的任务'), WORK_MUST_BE_STOPPED_FIRST: t('先停止本群'),
       WORK_ACTIVE: t('有进行中的协作任务，先停止本群'), ACTIVE_WORK: t('有进行中的协作任务，先停止本群'),
-      WORK_NOT_ACTIVE: t('任务不在进行中'), NO_MEMBER: t('席位是空的'),
+      WORK_NOT_ACTIVE: t('任务不在进行中'), NO_MEMBER: t('席位是空的'), WORK_TIME_LIMIT: t('已到总时长上限'),
     };
     return map[code] || t('暂时不可用');
   }
 
+  // A Claude wait counts as standing by while armed, and while 'rearming': the up to 30 seconds after
+  // the helper ended a wait by itself (WINDOW_END) and Claude starts the next one.
   function memberView(m) {
     if (!m) return { text: t('未进群'), tone: 'off' };
-    const claudeArmed = m.route === 'claude-pull' && m.wait && m.wait.state === 'armed';
+    const claudeArmed = m.route === 'claude-pull' && m.wait && ['armed', 'rearming'].includes(m.wait.state);
     switch (m.state) {
       case 'unbound': return { text: t('未进群'), tone: 'off' };
       case 'ready': return claudeArmed ? { text: t('待命至 {0}', fmtTime(m.wait.deadlineAt)), short: t('待命'), tone: 'ok' } : { text: t('已连接'), tone: 'ok' };
       case 'notified': return { text: t('已通知 · 等它来取'), short: t('已通知'), tone: 'busy' };
       case 'busy':
-        if (claudeArmed || m.canReceiveCollaboration) return { text: t('工作中 · 收件已接通'), short: t('工作中'), tone: 'busy' };
-        return { text: t('处理中'), tone: 'busy' };
+        if ((claudeArmed && !m.workInboxActive) || m.canReceiveCollaboration) return { text: t('工作中 · 收件已接通'), short: t('工作中'), tone: 'busy' };
+        return m.workInboxActive ? { text: t('工作中 · 工作收件未接通'), short: t('收件未接通'), tone: 'warn' } : { text: t('处理中'), tone: 'busy' };
       case 'unarmed': return { text: t('未待命'), tone: 'off' };
       case 'expired': return { text: t('等待到期'), tone: 'off' };
       case 'disconnected': return { text: t('连接断开'), tone: 'bad' };
@@ -274,8 +279,12 @@
   // their own meaning.
   const RECONNECT_STATES = ['unarmed', 'expired', 'disconnected'];
   const RECONNECT_GRACE_MS = 45000;
+  // A member busy with collaborative work can also carry a hint (0.3.3) when its Claude wait is gone. Only
+  // an expired wait is certain to need reconnecting; a wait not armed mid-turn is normal while it works,
+  // so that case gets the button in its menu, not the banner.
   function needsReconnect(m) {
-    return Boolean(m && m.binding && m.reconnectHint && RECONNECT_STATES.includes(m.state));
+    return Boolean(m && m.binding && m.reconnectHint
+      && (RECONNECT_STATES.includes(m.state) || (m.wait && m.wait.state === 'expired')));
   }
   // One seat as this window sees it: a broker restart or a replaced binding is a new seat.
   const memberKey = (c, m) => `${c.instanceId}:${c.room.id}:${m.binding ? m.binding.id : m.agent}`;
@@ -331,6 +340,15 @@
     return { text: t('{0} · 需要重新连接', memberView(m).text), short: t('需重连'), tone: m.state === 'disconnected' ? 'bad' : 'warn' };
   }
 
+  // With its default settings Claude Code stops a background command after 2 hours at most (30 minutes
+  // without a timeout), and the helper ends a wait by itself just before that (WINDOW_END), so Claude rearms its wait several times
+  // within one lease. Every line the person pastes into a Claude session says so: that paste is their
+  // go-ahead to rearm without asking. Added on a line of its own after the line's own text.
+  function withWaitRule(m, text) {
+    if (m.agent !== 'claude') return text;
+    return `${text}\n${t('收消息用一个后台等待，后台命令的超时显式设为 7200000 毫秒。等待每次返回，或者工具到时限把它停掉，处理完就直接重挂同一个等待，不用问我。只有提示 TIMEOUT、BINDING_INVALID 或 ROOM_ARCHIVED 时才停；我自己停掉的等待也不要重挂。遇到身份或恢复类的错误，先按协议处理，再重试。')}`;
+  }
+
   // What the person pastes into the member's original session, built from the broker's reconnectHint.
   // It reconnects that exact seat (--reconnect: the same binding, native session and gate, never a new
   // or replaced seat); Claude also renews its receiving lease if it ran out. The agent checks its own
@@ -343,8 +361,8 @@
       `--gate-version ${hint.expectedGate.version}`, hint.runtimeDir ? `--runtime-dir ${quote(hint.runtimeDir)}` : null,
       '--reconnect', hint.renew ? '--renew' : null].filter(Boolean).join(' ');
     // The command sits on a line of its own, so no punctuation around it can end up in the shell.
-    return t('请重新连接群「{0}」（room: {1}）。先读 {2}。然后核对你当前原生会话的 ID 是否为 {3}：不是就停下并告诉我，不要拿这个 ID 冒充。核对无误后，在 --session 后面填你的会话 ID，运行下面这行：\n{4}\n再按协议重新开始收消息。如果提示 GATE_CHANGED 或 BINDING_CHANGED，请让我重新复制。',
-      hint.roomName, hint.roomId, hint.protocolPath || 'docs/AGENT_PROTOCOL.md', hint.expectedNativeSessionId, cmd);
+    return withWaitRule(m, t('请重新连接群「{0}」（room: {1}）。先读 {2}。然后核对你当前原生会话的 ID 是否为 {3}：不是就停下并告诉我，不要拿这个 ID 冒充。核对无误后，在 --session 后面填你的会话 ID，运行下面这行：\n{4}\n再按协议重新开始收消息。如果提示 GATE_CHANGED 或 BINDING_CHANGED，请让我重新复制。',
+      hint.roomName, hint.roomId, hint.protocolPath || 'docs/AGENT_PROTOCOL.md', hint.expectedNativeSessionId, cmd));
   }
 
   // For a seated member that lost track of what it owes (after compacting its context, say): the
@@ -356,8 +374,8 @@
     const quote = (p) => `"${p}"`;
     const cmd = [`node ${quote(hint.helperPath)} resume`, `--room ${hint.roomId}`, `--as ${m.agent}`, `--binding ${hint.bindingId}`,
       hint.runtimeDir ? `--runtime-dir ${quote(hint.runtimeDir)}` : null].filter(Boolean).join(' ');
-    return t('群「{0}」（room: {1}）里还有发给你的消息没有回复。先核对你当前原生会话的 ID 是否为 {2}：不是就停下并告诉我，不要拿这个 ID 冒充。核对无误后运行下面这行，它会列出还没回复的消息：\n{3}\n然后按协议逐条回复。',
-      roomName, hint.roomId, hint.nativeSessionId, cmd);
+    return withWaitRule(m, t('群「{0}」（room: {1}）里还有发给你的消息没有回复。先核对你当前原生会话的 ID 是否为 {2}：不是就停下并告诉我，不要拿这个 ID 冒充。核对无误后运行下面这行，它会列出还没回复的消息：\n{3}\n然后按协议逐条回复。',
+      roomName, hint.roomId, hint.nativeSessionId, cmd));
   }
 
   function memberBlockText(m, short, due = false) {
@@ -433,10 +451,10 @@
   function requestStateView(w) {
     if (w.waitDisposition === 'abandoned') return { text: t('已放弃等待'), tone: 'off' };
     switch (w.requestState) {
-      case 'queued': return { text: t('排队中，等对方检查点'), tone: 'pending' };
+      case 'queued': return w.deliveryBlockedReason ? { text: t('尚未送达 · 等待恢复接收'), tone: 'warn' } : { text: t('排队中'), tone: 'pending' };
       case 'notified': return { text: t('已通知对方'), tone: 'pending' };
       case 'claimed': return { text: t('对方已领取'), tone: 'pending' };
-      case 'awaiting_response': return { text: w.receivedAt ? t('对方已接收 · 待答复') : t('已交给原生应用 · 待答复'), tone: 'pending' };
+      case 'awaiting_response': return { text: w.receivedAt ? t('对方已接收 · 待答复') : t('已交给原生应用 · 等接收'), tone: 'pending' };
       case 'answered': return { text: t('已答复'), tone: 'ok' };
       case 'uncertain': return { text: t('不确定是否送到'), tone: 'warn' };
       case 'failed': return { text: t('发送失败'), tone: 'bad' };
@@ -452,6 +470,7 @@
   const ATTENTION = {
     uncertain: t('不确定是否送到'), failed: t('发送失败'), member_unready: t('成员未进群，消息在排队'), stuck: t('等太久没回复'),
     work_budget: t('协作额度用完'), work_expired: t('协作任务到期'), work_blocked: t('有人卡住了'), abandoned_late: t('放弃后又回来了'),
+    work_receive_unavailable: t('工作请求尚未送达，等待恢复接收'),
   };
 
   // ---- State --------------------------------------------------------------------------
@@ -2690,8 +2709,8 @@
       `--gate-version ${gate.version}`, joinVersion ? `--join-version ${joinVersion}` : null,
       hint.runtimeDir ? `--runtime-dir ${quote(hint.runtimeDir)}` : null].filter(Boolean).join(' ');
     const where = hint.helperPath ? '' : t('在 {0} ', hint.projectDir || t('ThreadCrew 的安装目录'));
-    return t('请进群「{0}」（room: {1}）：{2}运行 {3}。进群后先读 {4}，按里面的说明收发消息。如果提示 GATE_CHANGED 或 JOIN_CHANGED，请让我重新复制这句。',
-      c.room.name, c.room.id, where, cmd, hint.protocolPath || 'docs/AGENT_PROTOCOL.md');
+    return withWaitRule(m, t('请进群「{0}」（room: {1}）：{2}运行 {3}。进群后先读 {4}，按里面的说明收发消息。如果提示 GATE_CHANGED 或 JOIN_CHANGED，请让我重新复制这句。',
+      c.room.name, c.room.id, where, cmd, hint.protocolPath || 'docs/AGENT_PROTOCOL.md'));
   }
 
   function addBudget(w, kind) {
@@ -2699,6 +2718,42 @@
     runOp(rk(`budget:${kind}`), roomPath(`/work/${encodeURIComponent(w.id)}/budget`), {
       operationId: uuid(), expectedGate: control().room.gate, expectedWorkVersion: w.version, addRequests: req, addWakes: wake,
     });
+  }
+
+  // More time for a work session, from the broker's timeBudget: one add is capped (maxAddSeconds) and
+  // so is the session's whole length (maxSeconds, counted from its start). Nothing can be added once
+  // the broker's actions.addTime says no, so an ended session is never brought back.
+  function addableSeconds(w) {
+    const tb = w.timeBudget;
+    if (!tb || !(w.actions && w.actions.addTime && w.actions.addTime.enabled)) return 0;
+    return Math.max(0, Math.min(tb.maxAddSeconds, tb.maxSeconds - tb.limitSeconds));
+  }
+  function addTime(w, hours) {
+    runOp(rk('budget:time'), roomPath(`/work/${encodeURIComponent(w.id)}/budget`), {
+      operationId: uuid(), expectedGate: control().room.gate, expectedWorkVersion: w.version, addSeconds: hours * 3600,
+    });
+  }
+  // Why no time can be added: the broker's reason, or the whole-length cap; null while time can be added.
+  function addTimeHint(w) {
+    const a = w.actions && w.actions.addTime;
+    if (!w.timeBudget || !a) return null;
+    const hours = Math.round(w.timeBudget.maxSeconds / 3600);
+    const atCap = t('已到 {0} 小时的总时长上限', hours);
+    if (!a.enabled) return a.reason === 'WORK_TIME_LIMIT' ? atCap : a.reason ? reasonText(a.reason) : t('现在不能延长');
+    const addable = addableSeconds(w);
+    if (addable <= 0) return atCap;
+    return addable < TIME_STEPS_H[0] * 3600 ? t('剩下可加的时间不到 1 小时（一项任务总共最多 {0} 小时）', hours) : null;
+  }
+
+  // What one "+" added, from the broker's event fields (0.3.3); the plain line for older events.
+  function budgetChangeText(w) {
+    const parts = [];
+    if (w.addRequests > 0) parts.push(t('+{0} 条请求', w.addRequests));
+    if (w.addWakes > 0) parts.push(t('+{0} 次唤醒', w.addWakes));
+    if (w.addSeconds > 0) parts.push(w.addSeconds % 3600 === 0 ? t('+{0} 小时', w.addSeconds / 3600) : t('+{0} 分钟', Math.round(w.addSeconds / 60)));
+    if (!parts.length) return t('协作额度已调整');
+    const end = w.addSeconds > 0 && w.expiresAt ? t('，到 {0} 结束', fmtTime(w.expiresAt)) : '';
+    return t('协作额度已调整：{0}', parts.join(t('、'))) + end;
   }
 
   async function releaseWork(w) {
@@ -3104,7 +3159,7 @@
         return h('div', { class: `work-line from-${w.author}`, 'data-id': e.id }, h('strong', { class: `name name-${w.author}` }, who), t(' 状态：{0}', WORK_STATE[w.workState] || w.workState || ''), w.content && w.content.previewText ? [' · ', h('span', { class: 'muted' }, snippet(w.content.previewText, 80))] : null, h('span', { class: 'ts' }, fmtTime(e.at)));
       case 'ended': return divider(t('协作任务已结束'), e.id);
       case 'released': return divider(t('已解除这项任务的占用'), e.id);
-      case 'budget_changed': return systemLine(t('协作额度已调整'), 'info', e.at, e.id);
+      case 'budget_changed': return systemLine(budgetChangeText(w), 'info', e.at, e.id);
       case 'needs_human':
         return h('article', { class: 'msg work-card needs-human', 'data-id': e.id },
           h('div', { class: 'meta' }, h('strong', null, t('{0} 需要你决定', who)), h('span', { class: 'ts' }, fmtTime(e.at))),
@@ -3133,7 +3188,7 @@
           h('div', { class: 'deliveries left' }, h('span', { class: `chip tone-${tone}` }, parts)), late ? h('div', { class: 'tags' }, late) : null);
       }
       case 'response': {
-        const rd = w.responseDelivery && RESPONSE_DELIVERY[w.responseDelivery.state];
+        const rd = w.responseDelivery && (w.responseDelivery.blockedReason ? [t('答复尚未送达 · 等待恢复接收'), 'warn'] : RESPONSE_DELIVERY[w.responseDelivery.state]);
         return h('article', { class: `msg work-card from-${w.author}${late ? ' is-late' : ''}`, 'data-id': e.id, 'data-reply-order': String(e.order) },
           h('div', { class: 'meta' },
             h('strong', { class: `name name-${w.author}` }, who), ` → ${NAMES[w.recipient] || ''}`,
@@ -3355,7 +3410,7 @@
         onclick: () => { st.panel = open ? null : { kind: 'work' }; render(); },
       }, icon('zap', 14), h('span', { class: 'chip-label' }, t('协作任务')),
         h('span', { class: 'chip-sub' }, w.coordinationState === 'active' ? timeLeft(w.expiresAt) : (COORDINATION[w.coordinationState] || w.coordinationState))));
-      if (!['completed', 'stopped', 'expired'].includes(w.coordinationState)) chips.push(budgetMeter(w, 'requests'), budgetMeter(w, 'wakes'));
+      if (!['completed', 'stopped', 'expired'].includes(w.coordinationState)) chips.push(budgetMeter(w, 'requests'), budgetMeter(w, 'wakes'), timeMeter(w));
     }
     const n = c.needsRyan;
     if (n && n.count) {
@@ -3390,8 +3445,38 @@
       class: `work-meter${tone}${add ? ' has-add' : ''}`,
       title: kind === 'requests' ? t('请求额度：剩 {0}，共 {1}', b.remaining, b.limit) : t('唤醒额度：剩 {0}，共 {1}', b.remaining, b.limit),
     },
+    h('span', { class: 'wm-icon', 'aria-hidden': 'true' }, icon(kind === 'requests' ? 'chat' : 'bell', 13)),
     h('span', { class: 'wm-label' }, kind === 'requests' ? t('请求余量') : t('唤醒余量')),
     h('span', { class: 'wm-num' }, `${b.remaining}/${b.limit}`),
+    h('span', { class: 'wm-track', 'aria-hidden': 'true' }, h('span', { class: 'wm-fill', style: `width:${pct}%` })),
+    add);
+  }
+
+  // The time left, beside the two budgets, with a "+" for one more hour while the broker allows it.
+  // Counted from expiresAt, so it stays current between snapshots. Absent with a broker that has no
+  // timeBudget.
+  function timeMeter(w) {
+    const tb = w.timeBudget;
+    if (!tb) return null;
+    const left = Math.max(0, Math.floor((Date.parse(w.expiresAt) - serverNow()) / 1000));
+    const pct = tb.limitSeconds > 0 ? Math.max(0, Math.min(100, Math.round((left / tb.limitSeconds) * 100))) : 0;
+    const tone = left <= 0 ? ' tone-bad' : pct <= 20 ? ' tone-warn' : '';
+    const step = TIME_STEPS_H[0];
+    const op = st.ops.get(rk('budget:time'));
+    const add = addableSeconds(w) < step * 3600 ? null
+      : op && op.state === 'sending' ? h('span', { class: 'spinner wm-busy', role: 'status', 'aria-label': t('处理中…') })
+      : op ? h('button', { type: 'button', class: 'wm-add is-unsure', title: t('结果待确认，打开详情重试'), onclick: () => { st.panel = { kind: 'work' }; render(); } }, '!')
+      : h('button', {
+        type: 'button', class: 'wm-add', title: t('再给 {0} 小时', step), 'aria-label': t('再给 {0} 小时', step), onclick: () => addTime(w, step),
+      }, icon('plus', 12));
+    const mins = Math.floor(left / 60);
+    return h('span', {
+      class: `work-meter${tone}${add ? ' has-add' : ''}`,
+      title: t('时间：{0}，到 {1} 结束', timeLeft(w.expiresAt), fmtTime(w.expiresAt)),
+    },
+    h('span', { class: 'wm-icon', 'aria-hidden': 'true' }, icon('clock', 13)),
+    h('span', { class: 'wm-label' }, t('时间余量')),
+    h('span', { class: 'wm-num' }, `${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, '0')}`),
     h('span', { class: 'wm-track', 'aria-hidden': 'true' }, h('span', { class: 'wm-fill', style: `width:${pct}%` })),
     add);
   }
@@ -3411,6 +3496,12 @@
       actions.push(actionState(rk('budget:requests')) || btn(t('再给 {0} 条请求', BUDGET_STEP.requests), () => addBudget(w, 'requests')));
       actions.push(actionState(rk('budget:wakes')) || btn(t('再给 {0} 次唤醒', BUDGET_STEP.wakes), () => addBudget(w, 'wakes')));
     }
+    if (w.timeBudget && w.actions && w.actions.addTime && w.actions.addTime.enabled) {
+      const addable = addableSeconds(w);
+      actions.push(actionState(rk('budget:time'))
+        || TIME_STEPS_H.map((n) => btn(t('延长 {0} 小时', n), () => addTime(w, n), { disabled: n * 3600 > addable })));
+    }
+    const timeHint = addTimeHint(w);
     if (w.actions && w.actions.release) {
       actions.push(w.actions.release.enabled ? (actionState(rk('release')) || btn(t('解除这项任务'), () => releaseWork(w), { danger: true }))
         : h('span', { class: 'hint', title: reasonText(w.actions.release.reason) }, w.coordinationState === 'active' ? '' : reasonText(w.actions.release.reason)));
@@ -3419,7 +3510,9 @@
       h('p', { class: 'work-goal', title: w.scopeSummary || '' }, w.objective),
       workAuthority(w.authority, true),
       h('div', { class: `work-state${paused ? ' tone-warn' : ''}` },
-        `${COORDINATION[w.coordinationState] || w.coordinationState}${paused && pausedWhat ? t('（{0}用完）', pausedWhat) : ''} · ${timeLeft(w.expiresAt)}`),
+        `${COORDINATION[w.coordinationState] || w.coordinationState}${paused && pausedWhat ? t('（{0}用完）', pausedWhat) : ''} · ${timeLeft(w.expiresAt)}`
+        + (['active', 'paused_budget'].includes(w.coordinationState) ? t('，到 {0} 结束', fmtTime(w.expiresAt)) : '')),
+      timeHint && ['active', 'paused_budget'].includes(w.coordinationState) ? h('div', { class: 'hint' }, timeHint) : null,
       h('ul', { class: 'work-people' }, participants),
       h('div', { class: 'work-meters' },
         meter(t('请求额度'), w.requestBudget.remaining, w.requestBudget.limit),
@@ -3582,12 +3675,12 @@
         rows.push([t('会话'), t('{0}（{1}）', m.binding.label, m.binding.source === 'native_verified' ? t('已核实原生会话') : t('手动登记'))]);
         rows.push([t('进群时间'), fmtTime(m.binding.joinedAt)]);
       }
-      const deadlineShown = m.state === 'ready' && m.route === 'claude-pull' && m.wait && m.wait.state === 'armed';
+      const deadlineShown = m.state === 'ready' && m.route === 'claude-pull' && m.wait && ['armed', 'rearming'].includes(m.wait.state);
       if (m.wait && m.wait.deadlineAt && !deadlineShown) rows.push([t('待命期限'), fmtTime(m.wait.deadlineAt)]);
       if (m.openWork && (m.openWork.queued || m.openWork.possibleRunning)) rows.push([t('手上的事'), t('排队 {0} 条 · 可能在生成 {1} 条', m.openWork.queued, m.openWork.possibleRunning)]);
       const actions = [];
       if (c.room.lifecycle === 'open') {
-        if (due) actions.push(reconnectButton(m));
+        if (due || (m.binding && m.reconnectHint)) actions.push(reconnectButton(m));
         // The hint exists while any reply is owed; offered once the wait is as long as the one that
         // offers giving up on it, not during every ordinary reply.
         if (m.binding && m.recoveryHint && !due && minutesSince(m.recoveryHint.waitingSince) >= ABANDON_SHOW_MIN) {

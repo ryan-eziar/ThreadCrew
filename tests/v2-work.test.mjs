@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { V2Broker } from '../src/v2-broker.mjs';
 import { WorkCoordinator } from '../src/v2-work.mjs';
 import { ThreadCrewFeatures } from '../src/threadcrew-features.mjs';
+import { loadNativeDeliveryCapability } from '../src/native-receive-proof.mjs';
 
 const root = resolve(import.meta.dirname, '..', 'work', 'v2-work-tests');
 let serial = 0;
@@ -45,6 +46,16 @@ async function fixture(t, options = {}) {
     operationId: op('request'), toBindingId: to, kind: 'review_request', text, attachmentIds: [] });
   return { broker, work, roomId, codex, claude, gate, begin, accept, request, handoff, runtimeDir };
 }
+
+test('accepted work never hides an expired Claude seat reconnect hint',async t=>{
+  let now=Date.parse('2026-10-03T00:00:00Z');
+  const f=await fixture(t,{clock:()=>now}),started=await f.begin();
+  await f.accept(started,'claude','synthetic-expired-work-claim');
+  now+=36_000_001;
+  const member=(await f.broker.getControl(f.roomId)).members.find(m=>m.agent==='claude');
+  assert.equal(member.wait.state,'expired');assert.ok(member.reconnectHint);
+  assert.equal(member.reconnectHint.expectedBindingId,f.claude.bindingId);
+});
 
 for (const agent of ['codex','claude']) test(`removal of ${agent} warns about stopped and released work even without ordinary replies pending`, async t => {
   const f=await fixture(t),started=await f.begin();
@@ -241,10 +252,70 @@ test('live capability is rechecked before claiming a queued request without spen
   assert.equal((await f.work.get(f.roomId, started.work.id)).wakeBudget.used, 0);
   assert.equal((await f.broker.store.read(sql => sql.get('SELECT state FROM work_requests WHERE id=?', [request.requestId]))).state, 'queued');
   assert.ok(checks >= 1);
+  assert.equal((await f.work.requests(f.roomId,started.work.id)).items[0].request.deliveryBlockedReason,'NATIVE_RECEIVE_UNVERIFIED');
+  assert.ok((await f.broker.getAttention(f.roomId)).items.some(i=>i.kind==='work_receive_unavailable'));
   currentMode = 'next_step';
   await f.work.flushNative(f.roomId);
   assert.equal(sends, 1);
   assert.equal((await f.work.get(f.roomId, started.work.id)).wakeBudget.used, 1);
+  assert.equal((await f.work.requests(f.roomId,started.work.id)).items[0].request.deliveryBlockedReason,null);
+});
+
+test('production fallback delivers an exact request after an app change and waits for an actual receipt',async t=>{
+  let sends=0,actualDelivery;
+  const transport={probe:async()=>({available:true}),sendWork:async(d,{beforeSend})=>{beforeSend();sends++;actualDelivery=d;return{status:'sent'};}};
+  const f=await fixture(t,{codexReceiveMode:'next_turn',transport,codexReceiveModeProvider:async()=>
+    (await loadNativeDeliveryCapability({runtimeDir:f.runtimeDir,projectDir:resolve(import.meta.dirname,'..')})).codexReceiveMode});
+  const started=await f.begin();await f.accept(started,'codex');await f.accept(started,'claude','fallback-claim');
+  const request=await f.request(started.work.id,f.claude.bindingId,f.codex.bindingId);
+  await eventually(async()=>sends===1);await f.work.flushNative(f.roomId);
+  assert.equal(actualDelivery.requestId,request.requestId);assert.equal(actualDelivery.nativeSessionId,f.codex.binding.nativeSessionId);
+  const r=(await f.work.requests(f.roomId,started.work.id)).items[0].request;
+  assert.equal(r.requestState,'awaiting_response');assert.equal(r.receivedAt,null,'a native send acknowledgement is not a receipt');
+  assert.equal((await f.work.get(f.roomId,started.work.id)).wakeBudget.used,1);
+});
+
+test('unavailable native route warns without spending a wake and reconnect delivers the original request once',async t=>{
+  let available=false,sends=0,probes=0;
+  const transport={probe:async()=>{probes++;return{available};},sendWork:async(d,{beforeSend})=>{beforeSend();sends++;return{status:'sent'};}};
+  const f=await fixture(t,{codexReceiveMode:'next_turn',transport});
+  const started=await f.begin();await f.accept(started,'codex');await f.accept(started,'claude','offline-claim');
+  const request=await f.request(started.work.id,f.claude.bindingId,f.codex.bindingId);
+  await f.work.flushNative(f.roomId);
+  assert.equal(sends,0);assert.equal((await f.work.get(f.roomId,started.work.id)).wakeBudget.used,0);
+  assert.equal((await f.work.requests(f.roomId,started.work.id)).items[0].request.deliveryBlockedReason,'NATIVE_UNAVAILABLE');
+  assert.equal((await f.broker.getAttention(f.roomId)).count,1);
+  const member=(await f.broker.getControl(f.roomId)).members.find(m=>m.agent==='codex');
+  assert.equal(member.state,'disconnected');assert.equal(member.canReceiveCollaboration,false);assert.ok(member.reconnectHint);
+  const revision=(await f.broker.getControl(f.roomId)).revision;
+  await f.work.flushNative(f.roomId);assert.equal((await f.broker.getControl(f.roomId)).revision,revision,'an unchanged failed probe does not create a retry loop');
+  available=true;
+  await f.work.flushNative(f.roomId);await f.work.flushNative(f.roomId);
+  const r=(await f.work.requests(f.roomId,started.work.id)).items[0].request;
+  assert.equal(r.requestId,request.requestId);assert.equal(r.deliveryBlockedReason,null);assert.equal(sends,1);
+  assert.equal((await f.broker.getAttention(f.roomId)).count,0);assert.ok(probes>=2);
+  assert.equal((await f.broker.getControl(f.roomId)).members.find(m=>m.agent==='codex').canReceiveCollaboration,true);
+});
+
+test('restart drains an untouched queued request but never repeats an uncertain native write',async t=>{
+  const f=await fixture(t);const started=await f.begin();await f.accept(started,'codex');await f.accept(started,'claude','restart-claim');
+  const request=await f.request(started.work.id,f.claude.bindingId,f.codex.bindingId);
+  await f.work.close();let sends=0;
+  const transport={probe:async()=>({available:true}),sendWork:async(d,{beforeSend})=>{assert.equal(d.requestId,request.requestId);beforeSend();sends++;return{status:'uncertain',reason:'NATIVE_DELIVERY_UNCONFIRMED'};}};
+  const resumed=await WorkCoordinator.attach(f.broker,{transport,codexReceiveMode:'next_turn'});t.after(()=>resumed.close());
+  await resumed.flushQueuedNative();await resumed.flushQueuedNative();
+  assert.equal(sends,1);assert.equal((await resumed.requests(f.roomId,started.work.id)).items[0].request.requestState,'uncertain');
+});
+
+test('explicit checkpoint clears an unavailable request warning before its response is queued',async t=>{
+  const transport={probe:async()=>({available:false}),sendWork:async()=>{assert.fail('Unavailable target must not be written');}};
+  const f=await fixture(t,{codexReceiveMode:'next_turn',transport});const started=await f.begin();
+  await f.accept(started,'codex');await f.accept(started,'claude','checkpoint-recovery');
+  const request=await f.request(started.work.id,f.claude.bindingId,f.codex.bindingId);await f.work.flushNative(f.roomId);
+  const claim=(await f.work.agent('checkpoint',f.roomId,started.work.id,f.codex.bindingId,{operationId:op('recover-checkpoint'),requestId:request.requestId})).items[0];
+  assert.equal((await f.broker.getAttention(f.roomId)).count,0);
+  await f.work.agent('responses',f.roomId,started.work.id,f.codex.bindingId,{operationId:op('checkpoint-answer'),requestId:request.requestId,claimId:claim.claimId,text:'Synthetic response after explicit recovery',attachmentIds:[]});
+  assert.equal((await f.broker.getAttention(f.roomId)).count,0,'the old Codex routing failure must not be attributed to Claude');
 });
 
 test('accepted work can exchange a request through checkpoint while the primary work continues', async t => {

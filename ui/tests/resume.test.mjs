@@ -16,7 +16,7 @@ const extract = (name) => {
 function context() {
   const c = { t: (zh, ...args) => zh.replace(/\{(\d+)\}/g, (m, k) => String(args[k])) };
   vm.createContext(c);
-  vm.runInContext(extract('resumeLine'), c);
+  vm.runInContext([extract('withWaitRule'), extract('resumeLine')].join('\n'), c);
   return c;
 }
 const member = (agent) => ({

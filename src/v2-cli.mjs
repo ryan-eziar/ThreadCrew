@@ -9,7 +9,7 @@ const ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/;
 const ROLES = new Set(['codex', 'claude']);
 const COMMANDS = {
   join: ['room', 'as', 'session', 'label', 'renew', 'reconnect', 'expected-binding', 'gate-segment', 'gate-version', 'join-version'],
-  wait: ['room', 'as', 'binding', 'request', 'work', 'scope'],
+  wait: ['room', 'as', 'binding', 'request', 'work', 'scope', 'window-ms'],
   read: ['room', 'as', 'binding', 'request', 'batch', 'claim'],
   post: ['room', 'as', 'binding', 'delivery', 'file', 'claim', 'done', 'format', 'attachments-file'],
   status: ['room', 'as', 'binding'],
@@ -221,10 +221,12 @@ export async function runV2Cli(args, { stdout = text => process.stdout.write(tex
     const scope = flags.scope ?? 'ordinary';
     if (!['ordinary', 'work', 'all'].includes(scope)) throw error('INVALID_INPUT', '--scope must be ordinary, work, or all.');
     if ((scope !== 'ordinary') !== Boolean(flags.work)) throw error('INVALID_INPUT', '--scope work or all requires --work; ordinary wait must omit --work.');
+    const windowMs = flags['window-ms'] === undefined ? undefined : positiveInteger(flags['window-ms'], '--window-ms');
+    if (windowMs > 6900000) throw error('INVALID_INPUT', '--window-ms must not exceed 6900000.');
     const body = withState(runtime, bindingId, current => {
       const requestId = flags.request ? validId(flags.request, '--request') : current.pendingWait?.requestId ?? randomUUID();
       const proposed = { requestId, notificationScopes: scope === 'all' ? ['ordinary', 'work'] : [scope],
-        ...(flags.work ? { workId: validId(flags.work, '--work') } : {}) };
+        ...(flags.work ? { workId: validId(flags.work, '--work') } : {}), ...(windowMs === undefined ? {} : { windowMs }) };
       if (current.pendingWait && JSON.stringify(current.pendingWait) !== JSON.stringify(proposed)) throw error('ID_CONFLICT', 'Retry the pending wait with its original IDs and scope.');
       current.pendingWait = proposed; return { state: current, value: proposed };
     });

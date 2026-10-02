@@ -120,7 +120,7 @@ export class V2Broker extends EventEmitter {
   #workspaceId; #catalogRevision = 0; #closed = false; #unsafe = false; #draining = false; #closePromise = null;
   #roomCache = new Map(); #stopping = new Set(); #writesStarted = new Set();
   #blockedBindings = new Set(); #currentBindings = new Map();
-  #connections = new Map(); #waiters = new Map(); #sendContexts = new Map(); #nativeTasks = new Set();
+  #connections = new Map(); #waiters = new Map(); #rearmTimers = new Map(); #sendContexts = new Map(); #nativeTasks = new Set();
   #events = []; #eventBytes = 0; #kickPending = false; #hooks = {}; #waitHookTasks = new Set();
   #mutationTail = Promise.resolve();
   #stuckTimer = null; #stuckScheduleGeneration = 0;
@@ -168,6 +168,13 @@ export class V2Broker extends EventEmitter {
     this.#kick();
   }
   registerWorkHooks(hooks = {}) { this.#hooks = { ...this.#hooks, ...hooks }; }
+  async recordNativeConnection(bindingId,nativeSessionId,available) {
+    const binding=await this.#store.read(sql=>sql.get("SELECT room_id FROM bindings WHERE id=? AND native_session_id=? AND current=1 AND agent='codex'",[bindingId,nativeSessionId]));
+    if(!binding)return;
+    const previous=this.#connections.get(bindingId);
+    this.#connections.set(bindingId,{available:available===true,at:this.#now()});
+    if(previous?.available!==(available===true))this.#connectionChanged(binding.room_id);
+  }
   #connectionChanged(roomId) {
     if(this.#closed || this.#unsafe || this.#draining)return;
     void this.mutate('connection.changed',roomId,{operationId:nowId('connection')},async()=>({}),{gate:false}).catch(()=>{});
@@ -180,7 +187,12 @@ export class V2Broker extends EventEmitter {
   #now() { return new Date(this.#clock()).toISOString(); }
   #check() { if (this.#closed) fail('CLOSED', 503); if (this.#unsafe) fail('RECOVERY_REQUIRED', 503); }
   blockRoom(roomId) { ident(roomId); this.#stopping.add(roomId); for (const [id, context] of this.#sendContexts) if (context.roomId === roomId) context.abort.abort(); }
-  blockBinding(bindingId) { ident(bindingId); this.#blockedBindings.add(bindingId); for (const context of this.#sendContexts.values()) if (context.bindingId === bindingId) context.abort.abort(); }
+  blockBinding(bindingId) { ident(bindingId); this.#blockedBindings.add(bindingId); this.#clearRearm(bindingId); for (const context of this.#sendContexts.values()) if (context.bindingId === bindingId) context.abort.abort(); }
+  #clearRearm(bindingId) {
+    clearTimeout(this.#rearmTimers.get(bindingId)); this.#rearmTimers.delete(bindingId);
+    const connection = this.#connections.get(bindingId);
+    if (connection?.rearmUntil) this.#connections.set(bindingId, { available:false, at:this.#now() });
+  }
   isWriteAllowed(roomId, bindingId, segmentId) {
     const room = this.#roomCache.get(roomId);
     return !this.#closed && !this.#unsafe && !this.#draining && !this.#stopping.has(roomId) && room?.lifecycle === 'open'
@@ -557,17 +569,19 @@ export class V2Broker extends EventEmitter {
     const connection = binding ? this.#connections.get(binding.id) : null;
     const waiter = binding ? this.#waiters.get(binding.id) : null;
     const expired = binding?.deadline_at && Date.parse(binding.deadline_at) <= this.#clock();
+    const rearming = !waiter && !expired && connection?.rearmUntil && Date.parse(connection.rearmUntil) > this.#clock();
     let state = 'unbound'; let reason = 'NO_BINDING'; let wait = null;
     if (binding) {
       if (agent === 'codex') {
         state = connection?.available ? 'ready' : 'disconnected'; reason = connection?.available ? null : 'NO_CONNECTION';
       } else {
-        const waitState = waiter ? 'armed' : parsed(binding.notification_json) ? 'notified' : expired ? 'expired' : 'unarmed';
-        state = waitState === 'armed' ? 'ready' : waitState;
-        reason = ['armed','notified'].includes(waitState) ? null : expired ? 'WAIT_EXPIRED' : 'WAITER_UNARMED';
+        const waitState = waiter ? 'armed' : parsed(binding.notification_json) ? 'notified' : rearming ? 'rearming' : expired ? 'expired' : 'unarmed';
+        state = ['armed','rearming'].includes(waitState) ? 'ready' : waitState;
+        reason = ['armed','notified','rearming'].includes(waitState) ? null : expired ? 'WAIT_EXPIRED' : 'WAITER_UNARMED';
         wait = { leaseId: binding.lease_id, state: waitState, deadlineAt: binding.deadline_at,
           lastRenewedByReplyId: binding.last_renewed_by_reply_id,
-          notificationScopes: waiter?.notificationScopes ?? [], workId: waiter?.workId ?? null };
+          notificationScopes: waiter?.notificationScopes ?? (rearming ? connection.notificationScopes : []),
+          workId: waiter?.workId ?? (rearming ? connection.workId : null), rearmUntil: rearming ? connection.rearmUntil : null };
       }
       if (blocker) { state = blocker.state === 'uncertain' ? 'recovery_required' : 'busy'; reason = blocker.state === 'uncertain' ? 'DELIVERY_UNCERTAIN' : 'AWAITING_REPLY'; }
       if (this.#unsafe || room.health !== 'ok') { state = 'recovery_required'; reason = 'RECOVERY_REQUIRED'; }
@@ -588,8 +602,9 @@ export class V2Broker extends EventEmitter {
         ...(!binding ? { expectedJoinVersion: room[`join_${agent}_version`] ?? 1 } : {}),
         expectedGate: { segmentId: room.gate_segment_id, version: room.gate_version } } };
     const projected = this.#hooks.projectMember ? await this.#hooks.projectMember(room.id, member, { sql }) ?? member : member;
-    projected.reconnectHint = binding && room.lifecycle === 'open' && !room.stopped_at
-      && room.health === 'ok' && !this.#unsafe && ['unarmed','expired','disconnected'].includes(projected.state)
+    projected.reconnectHint = binding && room.lifecycle === 'open'
+      && room.health === 'ok' && !this.#unsafe
+      && (['unarmed','expired','disconnected'].includes(projected.state) || ['unarmed','expired'].includes(state))
       ? { ...member.joinHint, expectedNativeSessionId: binding.native_session_id, reconnect: true, renew: agent === 'claude' }
       : null;
     return projected;
@@ -1333,7 +1348,6 @@ export class V2Broker extends EventEmitter {
         if (ctx.room.lifecycle !== 'open') fail('ROOM_ARCHIVED');
         const current = await ctx.sql.get('SELECT * FROM bindings WHERE room_id=? AND agent=? AND current=1',[roomId,input.agent]);
         if (input.reconnect) {
-          if (ctx.room.stopped_at) fail('ROOM_STOPPED');
           if (!current || current.id !== input.expectedBindingId || current.native_session_id !== input.nativeSessionId) fail('BINDING_CHANGED');
           this.#gate(ctx.room,input.expectedGate);
         }
@@ -1630,6 +1644,12 @@ export class V2Broker extends EventEmitter {
 
   async #notifyWaiter(waiter) {
     if (!this.#waiters.has(waiter.bindingId)) return;
+    const validity = await this.#store.read(async sql => {
+      const room = await sql.get('SELECT lifecycle FROM rooms WHERE id=?',[waiter.roomId]);
+      const binding = await sql.get('SELECT current FROM bindings WHERE id=? AND room_id=?',[waiter.bindingId,waiter.roomId]);
+      return room?.lifecycle !== 'open' ? 'ROOM_ARCHIVED' : !binding?.current ? 'BINDING_INVALID' : null;
+    });
+    if (validity) { this.#connections.set(waiter.bindingId,{available:false,at:this.#now()}); waiter.finish({status:validity}); return; }
     if (waiter.notificationScopes.includes('ordinary')) {
       const eligible = await this.#store.read(sql => this.#eligibleTx(sql,waiter.bindingId));
       if (eligible) {
@@ -1656,18 +1676,20 @@ export class V2Broker extends EventEmitter {
     }
   }
 
-  async wait(roomId,bindingId,{signal,requestId=nowId('wait'),notificationScopes=['ordinary'],workId=null}={}) {
+  async wait(roomId,bindingId,{signal,requestId=nowId('wait'),notificationScopes=['ordinary'],workId=null,windowMs=6900000}={}) {
     this.#check(); ident(roomId); ident(bindingId); ident(requestId);
+    if (!Number.isSafeInteger(windowMs) || windowMs < 1 || windowMs > 6900000) fail('INVALID_INPUT',400);
     if (!Array.isArray(notificationScopes) || notificationScopes.some(scope=>!['ordinary','work'].includes(scope)) || !notificationScopes.length) fail('INVALID_INPUT',400);
     const binding = await this.#store.read(async sql => {
       const room = await this.#room(sql,roomId);
+      if (room.lifecycle!=='open') fail('ROOM_ARCHIVED');
       const value = await sql.get('SELECT * FROM bindings WHERE id=? AND room_id=? AND current=1',[bindingId,roomId]);
       if (!value || value.agent!=='claude') fail('BINDING_INVALID',403);
-      if (room.stopped_at || room.lifecycle!=='open') fail('ROOM_STOPPED');
       return value;
     });
     if (Date.parse(binding.deadline_at)<=this.#clock()) return {roomId,status:'TIMEOUT',deadlineAt:binding.deadline_at};
     if (this.#waiters.has(bindingId)) fail('WAIT_ALREADY_ACTIVE');
+    this.#clearRearm(bindingId);
     return new Promise(resolve => {
       let timer;
       const waiter = {roomId,bindingId,requestId,notificationScopes:[...new Set(notificationScopes)],workId,
@@ -1677,7 +1699,20 @@ export class V2Broker extends EventEmitter {
         clearTimeout(timer); signal?.removeEventListener('abort',disconnect);
         this.#waiters.delete(bindingId);
         if(value.status==='DISCONNECTED'||value.status==='TIMEOUT')this.#connections.set(bindingId,{available:false,at:this.#now()});
-        this.#waitChanged(roomId,bindingId,{state:value.status==='NEW'?'notified':'not_armed',at:this.#now(),workId,notificationScopes:waiter.notificationScopes});
+        if (value.status === 'WINDOW_END') {
+          const connection = { available:true, at:this.#now(), workId, notificationScopes:waiter.notificationScopes,
+            rearmUntil:new Date(Math.min(this.#clock()+30000,Date.parse(binding.deadline_at))).toISOString() };
+          this.#connections.set(bindingId, connection);
+          const grace = setTimeout(() => {
+            this.#rearmTimers.delete(bindingId);
+            if (this.#connections.get(bindingId) !== connection) return;
+            this.#connections.set(bindingId, { available:false, at:this.#now() });
+            this.#waitChanged(roomId,bindingId,{state:'not_armed',at:this.#now(),workId,notificationScopes:waiter.notificationScopes});
+            this.#connectionChanged(roomId);
+          },Math.max(1,Date.parse(connection.rearmUntil)-this.#clock()));
+          grace.unref?.();this.#rearmTimers.set(bindingId,grace);
+        }
+        this.#waitChanged(roomId,bindingId,{state:value.status==='NEW'?'notified':value.status==='WINDOW_END'?'rearming':'not_armed',at:this.#now(),workId,notificationScopes:waiter.notificationScopes});
         this.#connectionChanged(roomId);
         resolve({roomId,...value});
       };
@@ -1686,7 +1721,8 @@ export class V2Broker extends EventEmitter {
       this.#connections.set(bindingId,{available:true,at:waiter.armedAt});
       this.#waitChanged(roomId,bindingId,{state:'armed',at:waiter.armedAt,workId,notificationScopes:waiter.notificationScopes});
       this.#connectionChanged(roomId);
-      timer = setTimeout(()=>waiter.finish({status:'TIMEOUT',deadlineAt:binding.deadline_at}),Math.max(1,Date.parse(binding.deadline_at)-this.#clock()));
+      const leaseRemaining = Date.parse(binding.deadline_at)-this.#clock();
+      timer = setTimeout(()=>waiter.finish({status:leaseRemaining<=windowMs?'TIMEOUT':'WINDOW_END',deadlineAt:binding.deadline_at}),Math.max(1,Math.min(leaseRemaining,windowMs)));
       timer.unref?.(); signal?.addEventListener('abort',disconnect,{once:true});
       if (signal?.aborted) disconnect();
       this.#kick();
@@ -1890,6 +1926,7 @@ export class V2Broker extends EventEmitter {
     this.#stuckTimer=null;
     for (const context of this.#sendContexts.values()) context.abort.abort();
     for (const waiter of [...this.#waiters.values()]) waiter.finish({status:'DISCONNECTED'});
+    for (const bindingId of [...this.#rearmTimers.keys()]) this.#clearRearm(bindingId);
   }
 
   close() {

@@ -16,7 +16,7 @@ const ROOM = { id: 'room-1', name: 'blog-engine', gate: { segmentId: 'segment-9'
 function context() {
   const c = { t: (zh, ...args) => zh.replace(/\{(\d+)\}/g, (m, k) => String(args[k])), control: () => ({ room: ROOM }) };
   vm.createContext(c);
-  vm.runInContext(extract('joinLine'), c);
+  vm.runInContext([extract('withWaitRule'), extract('joinLine')].join('\n'), c);
   return c;
 }
 const hint = (extra = {}) => ({

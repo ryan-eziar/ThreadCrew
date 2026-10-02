@@ -44,3 +44,16 @@ export async function loadNativeReceiveProof({ runtimeDir, projectDir, desktopVe
     return { codexReceiveMode: 'next_step', reason: null, verifiedAt: proof.verifiedAt };
   } catch (error) { return unverified(error.code === 'ENOENT' ? 'PROOF_MISSING' : 'PROOF_UNAVAILABLE'); }
 }
+
+/** Same-turn evidence controls the timing claim, not permission to deliver an
+ * authorized native message. The transport independently verifies the exact
+ * original Desktop thread before every write, and the work inbox records actual
+ * receipt separately. Without current timing evidence, use the normal native
+ * message route without promising that it arrives during an active turn. */
+export async function loadNativeDeliveryCapability(options) {
+  const proof = await loadNativeReceiveProof(options);
+  return proof.codexReceiveMode === 'next_step' ? proof : {
+    codexReceiveMode: 'next_turn', reason: 'SAME_TURN_TIMING_UNVERIFIED',
+    timingProofReason: proof.reason, verifiedAt: null,
+  };
+}

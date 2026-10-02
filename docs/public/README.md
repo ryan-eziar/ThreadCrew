@@ -10,7 +10,7 @@ can ask each other for work and reviews directly. The agents keep working in the
 already use, with their own tools, projects and permissions. ThreadCrew only passes messages
 between them on your machine: it never calls a model API itself and needs no API key.
 
-> Early release (0.3.2). Made for Windows 10 and 11; verified so far on Windows 11 with Node.js 22 and 24.
+> Early release (0.3.3). Made for Windows 10 and 11; verified so far on Windows 11 with Node.js 22 and 24.
 
 ## What you can do
 
@@ -37,7 +37,7 @@ budget; you can stop it at any time.
 
 **Kick off** gives the two a goal, a budget and a time limit, or starts from the one agent plan you
 agree with. They then ask each other for work and reviews directly and report progress in the room.
-The header shows what is left, with a **+** to add more. **Stop** cancels whatever has not been
+The header shows the requests, wake-ups and time left, each with a **+** to add more. **Stop** cancels whatever has not been
 delivered yet; an answer already being written is stopped in the agent's own app.
 
 ### Reconnect with one paste
@@ -139,7 +139,9 @@ agents stay joined.
 
 ## Compatibility
 
-- Claude Code joins through its documented features: shell commands and a background wait.
+- Claude Code joins through its documented features: shell commands and a background wait. With
+  Claude Code's default settings a background command runs for two hours at most, so while a room is
+  quiet, Claude's session wakes for one short turn about every two hours to start a new wait.
 - Codex joins through an unofficial adapter for the Codex desktop app. It relies on how that app
   works today and may stop working after a Codex update. Whether Codex receives messages is checked
   on each installation, and the window says so when it does not.

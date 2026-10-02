@@ -81,7 +81,8 @@ for sessions without an exact registration created by a successful Codex join.
 `join --reconnect` is the manual reconnect action for an existing seat. Verify the
 instruction's expected native session against your actual session first. The
 broker requires that same current binding, native session and gate; it cannot
-create or replace a seat, or reconnect a stopped room. `--renew` renews Claude's
+create or replace a seat. A stopped but unarchived room allows this exact-seat
+reconnect and waiting; stopped work and mail remain stopped. `--renew` renews Claude's
 reception lease only when it has expired, following the user's explicit manual
 reconnect request. It does not renew a work grant. A successful join alone does
 not prove Claude is receiving: follow the protocol to drain any pending notice
@@ -90,6 +91,17 @@ On `BINDING_CHANGED` or `GATE_CHANGED`, refresh the room and copy a new instruct
 instead of substituting identities or dropping the reconnect guard.
 
 For combined wait, a `NEW` notification with `workId` and `requestIds` belongs to the work inbox: use `work-checkpoint`, then the corresponding receipt/response helpers. An ordinary `NEW` / `NOTICE_PENDING` with `batchId` uses `read` → `post`. After draining the notified batch, arm the combined wait again while the grant remains active; after work ends, ordinary waiting is sufficient. This choice changes which notifications are listened for, not the broker's delivery eligibility or queue order.
+
+`wait` also accepts `--window-ms N`: a positive integer at most 6,900,000 ms,
+the default 115-minute window. The HTTP field is optional `windowMs`. At window
+end it returns `WINDOW_END` with the unchanged `deadlineAt`, clears the completed
+pending wait and exits normally. Rearm one background wait immediately in the
+same Claude session with tool timeout 7,200,000 ms. If the tool kills an unresolved
+wait, retry its original request, window and scope first. `WINDOW_END` provides
+at most 30 seconds of `rearming` grace with `rearmUntil`; `DISCONNECTED` does not.
+Lease `TIMEOUT`, `BINDING_INVALID` and `ROOM_ARCHIVED` end rearming. A user stop of
+the background tool also ends it. Work ending alone returns to ordinary waiting.
+Read `AGENT_PROTOCOL.md` for authorization, bounded idle wakes and recovery errors.
 
 All work commands require `--room ROOM --as ROLE --binding BINDING --work WORK`. `--op` is an optional stable operation ID; supply it when scripting. Without it the helper generates and persists one before HTTP, then reuses it after an unknown result. Until that operation is resolved, a changed payload or new ID for the same action is rejected. Text comes from a UTF-8 file and the exact payload is saved locally before sending.
 
@@ -106,6 +118,10 @@ node chat.mjs work-state --room ROOM --as ROLE --binding BINDING --work WORK --e
 
 `work-accept` also accepts `--accept false`. `work-request` optionally takes `--parent-request REQUEST` and `--review-ref REF`. `work-checkpoint --request` selects one request when the broker permits it. `work-state --expected-version` is the participant's version, not the work summary's version. The helper sends these to `/agent/v2/rooms/{roomId}/work/{workId}/{accept|progress|requests|checkpoint|received|responses|state}`. The broker remains authoritative for grant, budget, binding, gate, lease, claim, final, and version checks.
 
+Use `work-request` / `work-response` for peer coordination, including plans,
+handoffs, review and blockers. `work-state` / `work-progress` only update visible
+records; they do not wake the peer and are not message substitutes.
+
 Local lock files cover only read/modify/write of the client credential file. No local lock is held during HTTP or a long work wait. If a response is lost, rerun the same command with the same IDs and unchanged file content. Do not create another `--op` to guess whether the first operation committed.
 
 Implemented optional fields:
@@ -121,6 +137,8 @@ Implemented optional fields:
 
 ## Native receipt capability
 
-Production `serve` starts Codex work reception as `unverified` unless the local `runtime/native-receive-proof.json` contains a completed, same-original-turn acceptance record. `src/native-receive-proof.mjs` validates the actual receipt and continuation ordering, one response, the running Codex Desktop version and the native transport source hash. The coordinator repeats this local check only when a queued request/response is about to be claimed for native delivery, so an app update while the broker stays running cannot retain an old capability; no empty-inbox or model polling is introduced. Missing, invalid or changed evidence keeps explicit checkpoints available and disables automatic work push. A `sent` transport acknowledgment alone is insufficient. The startup result reports the mode and why proof was not accepted; it contains no credentials.
+Production `serve` separates native delivery from same-turn timing. Current completed evidence in `runtime/native-receive-proof.json` permits the timing claim `next_step`; missing, invalid or changed evidence falls back to `next_turn`, the normal native-message route with no promise of receipt during an active turn. `src/native-receive-proof.mjs` still validates actual receipt/continuation ordering, one response, the running Desktop version and the transport source hash before accepting same-turn evidence. App or adapter changes invalidate that timing claim without disabling authorized native delivery.
+
+For each queued request/response, the coordinator rechecks the local timing mode and probes the exact original native session read-only before claiming or spending a wake. The adapter verifies the same target again immediately before its guarded write. An unavailable target leaves the original request queued with `deliveryBlockedReason`, a reconnect hint and an attention item; a later room/reconnect event checks it again. Startup explicitly drains untouched queued work. Already attempted uncertain writes are never automatically repeated. No empty-inbox, timer or model polling is introduced. `sent` means handed to the native application, not received by the agent: only the exact `work-received` helper records receipt. Explicit checkpoints remain available.
 
 Contract receive modes are `unverified|next_step|next_turn|unavailable`; `native_push` is a member's routing label, not a `WorkParticipant.receiveMode`. Existing work summaries reflect the current verified mode after restart, rather than inheriting a stale stored capability.

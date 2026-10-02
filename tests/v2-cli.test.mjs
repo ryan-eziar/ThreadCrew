@@ -38,6 +38,22 @@ async function joinV2(f) {
 }
 const binding = ['--room', 'room-a', '--as', 'claude', '--binding', 'binding-a'];
 
+test('wait window is validated and a normal window end permits a fresh scoped wait',async t=>{
+  const f=await fixture(t,({path})=>path.endsWith('/join')
+    ?{bindingId:'binding-a',agent:'claude',nativeSessionId:'native-a',credential:'binding-secret'}
+    :{bindingId:'binding-a',agent:'claude',status:'WINDOW_END',deadlineAt:'2026-10-03T10:00:00Z'});
+  await joinV2(f);
+  for(const value of ['0','-1','1.5','6900001'])await assert.rejects(
+    f.run('wait',...binding,'--window-ms',value),e=>e.code==='INVALID_INPUT');
+  assert.equal(f.calls.filter(c=>c.path.endsWith('/wait')).length,0);
+  await f.run('wait',...binding,'--scope','all','--work','work-a','--window-ms','25');
+  assert.equal(JSON.parse(await readFile(f.clientPath,'utf8')).v2.pendingWait,null);
+  await f.run('wait',...binding,'--window-ms','25');
+  const waits=f.calls.filter(c=>c.path.endsWith('/wait'));
+  assert.equal(waits[0].body.windowMs,25);assert.deepEqual(waits[0].body.notificationScopes,['ordinary','work']);
+  assert.notEqual(waits[0].body.requestId,waits[1].body.requestId);assert.equal(waits[1].body.workId,undefined);
+});
+
 test('confirm-start reads a full pending plan and retries its original snapshot after an unknown outcome',async t=>{
   const plan='Full agreed implementation plan',sha=createHash('sha256').update(plan).digest('hex');let contexts=0,posts=0;
   const f=await fixture(t,({path,body})=>{

@@ -378,6 +378,7 @@ kbd {
   color: var(--muted); font-size: 12px; white-space: nowrap;
 }
 .work-meter.has-add { padding-right: 5px; }
+.work-meter .wm-icon { display: none; color: var(--muted); }
 .work-meter .wm-num { color: var(--text-strong); font-weight: 600; font-variant-numeric: tabular-nums; }
 .work-meter .wm-track { position: relative; width: 40px; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
 .work-meter .wm-fill { position: absolute; inset: 0 auto 0 0; border-radius: 2px; background: var(--grad-accent); }
@@ -793,6 +794,10 @@ kbd {
 }
 @media (max-width: 1500px) {
   .status-chip .chip-sub { display: none; }
+  /* Three meters fit beside the room name: each shows an icon instead of its word, which stays for
+     screen readers and in the tooltip. */
+  .work-meter .wm-icon { display: inline-flex; }
+  .work-meter .wm-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }
 @media (min-width: 1280px) and (max-width: 1500px) {
   .topbar:has(.work-meter) .member-state { display: none; } /* room for the work budget and the room name; the dot and tooltip keep the state */

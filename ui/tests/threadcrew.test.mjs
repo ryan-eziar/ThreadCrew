@@ -23,6 +23,21 @@ function helpers() {
   return c;
 }
 
+test('work status distinguishes unavailable reception, native handoff and actual receipt', () => {
+  const c = { t: zh => zh };
+  vm.createContext(c);
+  vm.runInContext([extract('requestStateView'), extract('memberView')].join('\n'), c);
+  assert.equal(c.requestStateView({requestState:'queued',deliveryBlockedReason:'NATIVE_UNAVAILABLE'}).tone,'warn');
+  assert.match(c.requestStateView({requestState:'queued',deliveryBlockedReason:'NATIVE_UNAVAILABLE'}).text,/尚未送达/);
+  assert.match(c.requestStateView({requestState:'awaiting_response',receivedAt:null}).text,/等接收/);
+  assert.match(c.requestStateView({requestState:'awaiting_response',receivedAt:'2026-10-01T12:00:00Z'}).text,/已接收/);
+  assert.equal(c.memberView({state:'busy',workInboxActive:true,canReceiveCollaboration:false}).tone,'warn');
+  assert.match(c.memberView({state:'busy',workInboxActive:true,canReceiveCollaboration:false}).text,/未接通/);
+  assert.equal(c.memberView({state:'busy',workInboxActive:false,canReceiveCollaboration:false}).tone,'busy','ordinary generation does not imply a work reception failure');
+  assert.equal(c.memberView({state:'busy',workInboxActive:true,route:'claude-pull',wait:{state:'armed'},canReceiveCollaboration:false}).tone,'warn','an ordinary-only wait is not a work inbox');
+  assert.match(c.memberView({state:'busy',canReceiveCollaboration:true}).text,/已接通/);
+});
+
 test('every re-fill of an element goes through fill(), which drops null children', () => {
   const direct = app.split('\n').filter((line) => line.includes('.replaceChildren(') && !line.includes('const fill = '));
   assert.deepEqual(direct, [], 'use fill(el, ...) instead of el.replaceChildren(...)');

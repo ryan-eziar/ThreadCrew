@@ -130,8 +130,8 @@ export async function runCli(args, { stdout = text => process.stdout.write(text)
       const { V2Broker } = await import('./src/v2-broker.mjs');
       const { WorkCoordinator } = await import('./src/v2-work.mjs');
       const { createV2Server } = await import('./src/v2-server.mjs');
-      const { loadNativeReceiveProof } = await import('./src/native-receive-proof.mjs');
-      const receiveProof = await loadNativeReceiveProof({ runtimeDir, projectDir: PROJECT });
+      const { loadNativeDeliveryCapability } = await import('./src/native-receive-proof.mjs');
+      const receiveProof = await loadNativeDeliveryCapability({ runtimeDir, projectDir: PROJECT });
       const broker = await V2Broker.open({ runtimeDir, codexTransport });
       let work, server;
       let resourcesClosing = null;
@@ -143,11 +143,12 @@ export async function runCli(args, { stdout = text => process.stdout.write(text)
       try {
         work = await WorkCoordinator.attach(broker, {
           transport: codexTransport, codexReceiveMode: receiveProof.codexReceiveMode,
-          codexReceiveModeProvider: async () => (await loadNativeReceiveProof({ runtimeDir, projectDir: PROJECT })).codexReceiveMode,
+          codexReceiveModeProvider: async () => (await loadNativeDeliveryCapability({ runtimeDir, projectDir: PROJECT })).codexReceiveMode,
         });
         server = await createV2Server({ broker, work, runtimeDir, projectDir: PROJECT, port, onShutdown: closeResources, autoUpdateChecks:true,
           onShutdownFailure: () => process.exit(1) });
         await broker.recheckNativeConnections();
+        await work.flushQueuedNative();
       }
       catch (cause) { await work?.close(); await broker.close(); await codexTransport.close?.(); throw cause; }
       print({ status: 'LISTENING', apiVersion: 'agent-chat.window.v2', url: server.url, workspaceId: broker.workspaceId, runtimeDir, nativeReceive: receiveProof });

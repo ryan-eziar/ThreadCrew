@@ -116,7 +116,7 @@ test('wrong session and stale gate reconnects cannot replace a seat or interrupt
   assert.equal((await f.member()).binding.nativeSessionId, 'intentional-replacement');
 });
 
-test('manual reconnect cannot create a seat, bypass Stop, or renew a stopped lease', async t => {
+test('stopped-room reconnect renews only the same seat and receives only a new human message', async t => {
   let now = Date.parse('2026-09-29T00:00:00Z');
   const f = await fixture(t, { clock: () => now });
   const emptyHint = { ...(await f.member()).joinHint, expectedNativeSessionId: 'synthetic-native-claude', renew: true };
@@ -129,11 +129,70 @@ test('manual reconnect cannot create a seat, bypass Stop, or renew a stopped lea
     recipients: ['claude'], text: 'Synthetic stopped request', attachmentIds: [] });
   const stop = await f.broker.stop(f.room.roomId, { operationId: op(), expectedGate: hint.expectedGate });
   now += 36_000_001;
-  assert.equal((await f.member()).reconnectHint, null);
-  await assert.rejects(f.reconnect({ ...hint, expectedGate: stop.gate }), e => e.code === 'ROOM_STOPPED');
-  assert.equal((await f.member()).wait.deadlineAt, joined.deadlineAt);
+  assert.ok((await f.member()).reconnectHint);
+  const renewed = await f.reconnect({ ...hint, expectedGate: stop.gate });
+  assert.equal(renewed.bindingId, joined.bindingId);
+  assert.equal(Date.parse(renewed.deadlineAt), now + 36_000_000);
   const queued = (await f.broker.getTimeline(f.room.roomId)).items.flatMap(item => item.deliveries ?? []);
   assert.equal(queued.length, 1); assert.equal(queued[0].state, 'stopped');
+  const wait = f.cli('wait', '--room', f.room.roomId, '--as', 'claude', '--binding', joined.bindingId, '--window-ms', '2000');
+  await until(async () => (await f.member()).wait.state === 'armed');
+  assert.equal((await f.control()).room.state, 'stopped');
+  const sent = await f.broker.sendHuman(f.room.roomId, { operationId:op(), expectedGate:stop.gate,
+    recipients:['claude'], text:'Synthetic message after Stop', attachmentIds:[] });
+  assert.equal((await wait).status, 'NEW');
+  const delivery = await f.cli('read', '--room', f.room.roomId, '--as', 'claude', '--binding', joined.bindingId);
+  assert.equal(delivery.deliveryId, sent.deliveryIds.claude);
+  assert.equal(delivery.text, 'Synthetic message after Stop');
+});
+
+test('window completion clears the helper wait and preserves the lease across rearm', async t => {
+  let now = Date.parse('2026-10-03T00:00:00Z');
+  const f=await fixture(t,{clock:()=>now}),joined=await f.joinMember('claude','synthetic-window-claude');
+  const args=['--room',f.room.roomId,'--as','claude','--binding',joined.bindingId];
+  assert.equal((await f.cli('wait',...args,'--window-ms','30')).status,'WINDOW_END');
+  const grace=await f.member();
+  assert.equal(grace.state,'ready');assert.equal(grace.wait.state,'rearming');
+  assert.equal(grace.wait.deadlineAt,joined.deadlineAt);assert.equal(Date.parse(grace.wait.rearmUntil),now+30000);
+  const wait=f.cli('wait',...args,'--window-ms','2000');
+  await until(async()=>(await f.member()).wait.state==='armed');
+  const sent=await f.broker.sendHuman(f.room.roomId,{operationId:op(),expectedGate:(await f.control()).room.gate,
+    recipients:['claude'],text:'Synthetic mail after rearm',attachmentIds:[]});
+  assert.equal((await wait).status,'NEW');
+  assert.equal((await f.cli('read',...args)).deliveryId,sent.deliveryIds.claude);
+  assert.equal((await f.member()).wait.deadlineAt,joined.deadlineAt);
+});
+
+test('window grace is bounded and real disconnection has no grace',async t=>{
+  let now=Date.parse('2026-10-03T00:00:00Z');
+  const f=await fixture(t,{clock:()=>now}),joined=await f.joinMember('claude','synthetic-grace-claude');
+  await f.broker.wait(f.room.roomId,joined.bindingId,{requestId:op(),windowMs:5});
+  now+=30001;
+  assert.equal((await f.member()).state,'unarmed');
+  const abort=new AbortController(),wait=f.broker.wait(f.room.roomId,joined.bindingId,{requestId:op(),signal:abort.signal,windowMs:1000});
+  await until(async()=>(await f.member()).wait.state==='armed');
+  abort.abort();assert.equal((await wait).status,'DISCONNECTED');
+  assert.equal((await f.member()).state,'unarmed');assert.equal((await f.member()).wait.rearmUntil,null);
+  now=Date.parse(joined.deadlineAt)-1;
+  assert.equal((await f.broker.wait(f.room.roomId,joined.bindingId,{requestId:op(),windowMs:1000})).status,'TIMEOUT');
+});
+
+test('wait windows reject invalid lengths and stop on archived or replaced bindings',async t=>{
+  const f=await fixture(t),joined=await f.joinMember('claude','synthetic-invalid-window');
+  for(const windowMs of [0,-1,1.5,6900001,'30',null])await assert.rejects(
+    f.broker.wait(f.room.roomId,joined.bindingId,{windowMs}),e=>e.code==='INVALID_INPUT');
+  const wait=f.broker.wait(f.room.roomId,joined.bindingId,{windowMs:2000});
+  await until(async()=>(await f.member()).wait.state==='armed');
+  await f.broker.join(f.room.roomId,{agent:'claude',nativeSessionId:'synthetic-new-window',
+    expectedBindingId:joined.bindingId,expectedGate:(await f.control()).room.gate});
+  assert.equal((await wait).status,'BINDING_INVALID');
+  const next=await f.member();
+  const archivedWait=f.broker.wait(f.room.roomId,next.binding.id,{windowMs:2000});
+  await until(async()=>(await f.member()).wait.state==='armed');
+  const control=await f.control();
+  await f.broker.archiveRoom(f.room.roomId,{operationId:op(),expectedGate:control.room.gate,expectedRoomVersion:control.room.version});
+  assert.equal((await archivedWait).status,'ROOM_ARCHIVED');
+  await assert.rejects(f.broker.wait(f.room.roomId,next.binding.id,{windowMs:5}),e=>e.code==='ROOM_ARCHIVED');
 });
 
 test('Codex manual reconnect requires a new successful native probe before showing Ready', async t => {

@@ -31,7 +31,7 @@ const member = (agent, state, bindingId = `binding-${agent}`) => ({
 function context(extra = {}) {
   const c = { t: (zh, ...args) => zh.replace(/\{(\d+)\}/g, (m, k) => String(args[k])), NAMES: { codex: 'Codex', claude: 'Claude' }, ...extra };
   vm.createContext(c);
-  vm.runInContext([constant('RECONNECT_STATES'), constant('RECONNECT_GRACE_MS'), extract('needsReconnect'), extract('reconnectLine'), extract('offlineDue')].join('\n'), c);
+  vm.runInContext([constant('RECONNECT_STATES'), constant('RECONNECT_GRACE_MS'), extract('needsReconnect'), extract('withWaitRule'), extract('reconnectLine'), extract('offlineDue')].join('\n'), c);
   return c;
 }
 

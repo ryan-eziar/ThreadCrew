@@ -33,6 +33,36 @@ Codex uses native push. Claude holds one real background wait in this same nativ
 session; an idle wait itself does not invoke a model. Do not create a CLI/API bot
 or a replacement native conversation to imitate this one.
 
+Claude starts that wait as a background Bash/PowerShell command with an explicit
+tool timeout of 7,200,000 ms. ThreadCrew ends each wait normally after 115 minutes
+with `WINDOW_END` (exit 0), before the default tool maximum. Rearm one wait at
+once in this same session; this is part of the user's join/reconnect instruction
+and does not require another confirmation. A tool time-limit stop or unexpected
+disconnect also requires recovery of the original wait, preserving its IDs and
+scope, followed by rearming. Never restart a command deliberately stopped by the
+user. Stop rearming on reception lease `TIMEOUT`, `BINDING_INVALID` or
+`ROOM_ARCHIVED`; resolve other explicit identity/recovery errors before retrying.
+Work ending means return to ordinary waiting, not leave the room.
+
+`WINDOW_END` never renews the reception lease or work grant. It allows at most
+30 seconds of `rearming` grace (bounded by the lease deadline); an actual
+disconnect has no grace. One short native wake per idle window is now expected,
+bounded by the existing reception lease. This is not model polling. A stopped,
+unarchived room still permits waiting and exact-seat reconnect, ready for the
+next new human message. It cannot resume stopped work or forward stopped mail.
+
+The [official tools reference](https://code.claude.com/docs/en/tools-reference#time-limit-for-background-commands)
+documents the default 30-minute background limit and two-hour explicit timeout
+maximum. It also documents configuration overrides; this protocol does not
+change the user's Claude settings or assume overrides are installed.
+
+During work, Codex native delivery remains automatic when same-turn timing
+evidence expires after an app or adapter update. `next_turn` does not guarantee
+receipt during active generation. Saying "standing by" is not receipt evidence:
+only the exact request's `work-received` result proves it was read. If the window
+shows reception unavailable, reconnect this original seat using its current
+instruction; the original queued request is retained and must not be recreated.
+
 ## Receive and answer exactly once
 
 For a Codex delivery, keep its exact delivery/binding/file IDs, save the complete
@@ -109,8 +139,14 @@ text and verified attachment manifest before implementing. The short objective
 is a label, not a substitute for the full approved scope and agreed assignments.
 
 A work kickoff has a `workId`. Submit its exact acceptance promptly, then
-continue the authorized task. Acceptance is not completion. Progress records do
-not need to wake a peer. Send a bounded work request only when the peer must act.
+continue the authorized task. Acceptance is not completion. Use direct
+`work-request` / `work-response` messages for anything the peer needs to know or
+act on: the plan, ownership, handoffs, blockers and review requests. The display
+records `work-progress` and `work-state` never wake a peer and cannot replace a
+message. Before marking your part completed, send a handoff/review request with
+the changes, checks and anything the peer must do, then finish required review
+and verification. Messages remain bounded by the work grant; do not exchange
+acknowledgements recursively or wake a peer for unchanged status.
 
 For Claude during an active work grant:
 
@@ -124,6 +160,12 @@ and incorporation into the original task, not an answer-to-answer loop. Complete
 or retry an existing pending wait with its original scope before changing it.
 Once work ends, return to ordinary waiting. Work budgets are communication
 ceilings, not targets or permission for additional work.
+
+Only a human can extend an active work session using the window's time control.
+The new end time is measured from the original kickoff, with at most ten hours
+added per operation and a total limit of 24 hours. Expired, stopped, completed
+or released sessions cannot be extended. Extending time does not add request or
+wake budget, renew Claude's reception lease, or broaden the authorized task.
 
 Use `work-status` to obtain your participant version before reporting a state.
 Only mark completed when your actual work and required checks are done. Stop and
