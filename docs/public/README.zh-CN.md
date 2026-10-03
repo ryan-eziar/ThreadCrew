@@ -9,7 +9,7 @@ ThreadCrew 是一个跑在你自己电脑上的小群聊。你在一个窗口里
 工作，用它们自己的工具、项目和权限；ThreadCrew 只在你的电脑上替它们传话，自己从不调用模型 API，
 也不需要 API key。
 
-> 早期版本（0.3.3）。面向 Windows 10 和 11，目前在 Windows 11 上用 Node.js 22 和 24 验证过。
+> 早期版本（0.3.4）。面向 Windows 10 和 11，目前在 Windows 11 上用 Node.js 22 和 24 验证过。
 
 ## 能做什么
 
@@ -88,7 +88,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-shortcut.p
 会直接复用。群、消息和文件都保存在安装目录下的 `runtime` 文件夹里。
 
 不用快捷方式的话，运行 `npm start` 会走同一个 Windows 启动器，并打印要打开的本地地址。
-启动器随后退出，服务继续在后台运行。关机或强制结束后，如果旧进程已退出，启动器会自动备份、
+启动器随后退出，服务独立在后台运行。更新或关闭 Codex 不会同时关闭 ThreadCrew 服务，
+但代理的原应用会话仍可能断开。关机或强制结束后，如果旧进程已退出，启动器会自动备份、
 校验 v2 数据再恢复，证据保存在 `runtime/recovery-evidence`。进程仍在、身份冲突或数据损坏时仍会
 停止并要求检查；不要手动删除锁或数据库文件。
 

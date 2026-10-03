@@ -56,8 +56,13 @@ function arrayFile(path, ids = false) {
   return value;
 }
 function atomicJson(path, value) {
+  const text = `${JSON.stringify(value, null, 2)}\n`;
+  // An unavailable-broker retry keeps its original pending request. Replacing
+  // identical bytes changes file identity and falsely aborts crash recovery.
+  try { if (fs.readFileSync(path, 'utf8') === text) return; }
+  catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
   const temp = `${path}.${randomUUID()}.tmp`;
-  try { fs.writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600, flag: 'wx' }); fs.renameSync(temp, path); }
+  try { fs.writeFileSync(temp, text, { mode: 0o600, flag: 'wx' }); fs.renameSync(temp, path); }
   finally { try { fs.unlinkSync(temp); } catch {} }
 }
 function clientFile(runtime, bindingId) { return join(runtime, 'clients', `${createHash('sha256').update(bindingId).digest('hex')}.json`); }

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm, stat } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { runV2Cli } from '../src/v2-cli.mjs';
@@ -37,6 +37,28 @@ async function joinV2(f) {
   return f.run('join', '--room', 'room-a', '--as', 'claude', '--session', 'native-a', '--expected-binding', 'null', '--gate-segment', 'segment-a', '--gate-version', '4');
 }
 const binding = ['--room', 'room-a', '--as', 'claude', '--binding', 'binding-a'];
+
+test('retrying an unavailable broker preserves the pending wait file identity until its result changes',async t=>{
+  let unavailable=true;
+  const f=await fixture(t,({path})=>path.endsWith('/join')
+    ?{bindingId:'binding-a',agent:'claude',nativeSessionId:'native-a',credential:'binding-secret'}
+    :unavailable?{__error:{code:'CONNECTION_LOST',outcome:'unknown'}}
+    :{bindingId:'binding-a',agent:'claude',status:'WINDOW_END'});
+  await joinV2(f);
+  const args=['wait',...binding];
+  await assert.rejects(f.run(...args),e=>e.code==='CONNECTION_LOST');
+  const before=await readFile(f.clientPath),identity=await stat(f.clientPath,{bigint:true});
+  const pending=JSON.parse(before).v2.pendingWait;
+  for(let attempt=0;attempt<3;attempt++)await assert.rejects(f.run(...args),e=>e.code==='CONNECTION_LOST');
+  const after=await stat(f.clientPath,{bigint:true});
+  assert.deepEqual([after.ino,after.mtimeNs,after.ctimeNs],[identity.ino,identity.mtimeNs,identity.ctimeNs],
+    'identical retry state must not look like a changed recovery source');
+  assert.deepEqual(await readFile(f.clientPath),before);
+  assert.ok(f.calls.filter(c=>c.path.endsWith('/wait')).every(c=>JSON.stringify(c.body)===JSON.stringify(pending)));
+  unavailable=false;
+  await f.run(...args);
+  assert.equal(JSON.parse(await readFile(f.clientPath)).v2.pendingWait,null,'the actual completed result must still be saved');
+});
 
 test('wait window is validated and a normal window end permits a fresh scoped wait',async t=>{
   const f=await fixture(t,({path})=>path.endsWith('/join')

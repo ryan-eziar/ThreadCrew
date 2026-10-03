@@ -10,7 +10,7 @@ can ask each other for work and reviews directly. The agents keep working in the
 already use, with their own tools, projects and permissions. ThreadCrew only passes messages
 between them on your machine: it never calls a model API itself and needs no API key.
 
-> Early release (0.3.3). Made for Windows 10 and 11; verified so far on Windows 11 with Node.js 22 and 24.
+> Early release (0.3.4). Made for Windows 10 and 11; verified so far on Windows 11 with Node.js 22 and 24.
 
 ## What you can do
 
@@ -95,8 +95,9 @@ open the window; if the service is already running, the same one is reused. Room
 files are kept in the `runtime` folder of the installation.
 
 Without the shortcut, `npm start` uses the same Windows launcher and prints the local address to open.
-The launcher then exits; the service stays in the background. After a shutdown or forced exit,
-it automatically backs up and validates a dead owner's v2 data before restarting.
+The launcher then exits; the service runs independently in the background. Updating or closing
+Codex does not stop ThreadCrew itself, although an agent's native session can disconnect.
+After a shutdown or forced exit, it automatically backs up and validates a dead owner's v2 data before restarting.
 Recovery evidence stays in `runtime/recovery-evidence`. A live owner, conflicting identity or
 invalid data still stops startup for inspection; do not manually delete lock or database files.
 

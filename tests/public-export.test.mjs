@@ -26,6 +26,9 @@ test('public exports preserve README screenshots, exclude unlisted media and rej
   const clean=join(temp,'clean');
   await exportPublic({source,destination:clean});
   const manifest=JSON.parse(await fs.readFile(join(clean,'PUBLIC_EXPORT_MANIFEST.json'),'utf8'));
+  const bootstrap='scripts/start-independent-broker.ps1';
+  assert.ok(manifest.files.some(file=>file.path===bootstrap));
+  assert.deepEqual(await fs.readFile(join(clean,bootstrap)),await fs.readFile(join(source,bootstrap)));
   const screenshots=['room','discuss','work','reconnect'].map(name=>`docs/media/screenshot-${name}.png`);
   for(const path of screenshots) {
     const original=await fs.readFile(join(source,path)), exported=await fs.readFile(join(clean,path));

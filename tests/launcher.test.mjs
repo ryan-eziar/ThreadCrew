@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { randomBytes, randomUUID, createHash } from 'node:crypto';
 import { dirname, join, resolve, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { discoverService } from '../src/service-discovery.mjs';
 import { canonicalRuntime } from '../src/runtime-recovery.mjs';
 
@@ -31,7 +31,8 @@ function ps(runtime, options = {}) {
     let stdout = '', stderr = '';
     child.stdout.setEncoding('utf8').on('data', data => { stdout += data; });
     child.stderr.setEncoding('utf8').on('data', data => { stderr += data; });
-    child.on('exit', code => resolveResult({ code, stdout, stderr }));
+    // exit can precede the last stdout chunk; close means both pipes drained.
+    child.on('close', code => resolveResult({ code, stdout, stderr }));
   });
 }
 async function fakeService(runtime, { wrongPage = false } = {}) {
@@ -186,8 +187,20 @@ async function terminateSynthetic(pid) {
 }
 async function startSynthetic(runtime) {
   const launched = await ps(runtime);
-  assert.equal(launched.code, 0, launched.stderr);
-  const result = JSON.parse(launched.stdout);
+  let result;
+  try {
+    assert.equal(launched.code, 0, launched.stderr);
+    result = JSON.parse(launched.stdout);
+  } catch (error) {
+    // Independent creation can succeed even if the launcher result is lost.
+    // These IDs come only from the new, bounded synthetic test runtime.
+    for (const name of await readdir(runtime)) {
+      if (!/^launcher-broker\.[a-f0-9]{32}\.result\.json$/.test(name)) continue;
+      const created = JSON.parse(await readFile(join(runtime, name), 'utf8'));
+      if (created.ok && created.processId) await terminateSynthetic(created.processId);
+    }
+    throw error;
+  }
   assert.equal(result.status, 'started');
   return result;
 }
@@ -199,12 +212,151 @@ async function humanApi(url) {
       method: body ? 'POST' : 'GET',
       headers: { Authorization: `Bearer ${config.humanToken}`, ...(body ? { Origin: url, 'Content-Type': 'application/json' } : {}) },
       ...(body ? { body: JSON.stringify(body) } : {}),
+      signal: AbortSignal.timeout(5000),
     });
     const value = await response.json(); assert.equal(value.ok, true, JSON.stringify(value));
     return value.result;
   };
 }
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
+
+// A disposable Windows Job reproduces the lifetime of an app-owned runner.
+// Only the synthetic launcher and its descendants are assigned to this Job.
+const jobHarness = String.raw`
+param([string]$Fixture, [string]$Launcher, [string]$NodePath)
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class LauncherJob {
+ [StructLayout(LayoutKind.Sequential)] struct BasicLimits {
+  public long ProcessTime, JobTime; public uint Flags;
+  public UIntPtr MinWorkingSet, MaxWorkingSet; public uint ActiveProcesses;
+  public UIntPtr Affinity; public uint Priority, Scheduling;
+ }
+ [StructLayout(LayoutKind.Sequential)] struct IoCounters {
+  public ulong ReadOperations, WriteOperations, OtherOperations, ReadBytes, WriteBytes, OtherBytes;
+ }
+ [StructLayout(LayoutKind.Sequential)] struct Limits {
+  public BasicLimits Basic; public IoCounters Io;
+  public UIntPtr ProcessMemory, JobMemory, PeakProcessMemory, PeakJobMemory;
+ }
+ [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] struct Startup {
+  public uint cb; public string reserved, desktop, title;
+  public uint x,y,width,height,xChars,yChars,fill,flags;
+  public ushort show, reservedSize; public IntPtr reservedBytes, input, output, error;
+ }
+ [StructLayout(LayoutKind.Sequential)] struct Info { public IntPtr process, thread; public uint pid, tid; }
+ [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern IntPtr CreateJobObject(IntPtr attrs, string name);
+ [DllImport("kernel32.dll", SetLastError=true)] static extern bool SetInformationJobObject(IntPtr job, int info, ref Limits limits, uint length);
+ [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool CreateProcess(string app, StringBuilder command, IntPtr pa, IntPtr ta, bool inherit, uint flags, IntPtr env, string cwd, ref Startup startup, out Info info);
+ [DllImport("kernel32.dll", SetLastError=true)] static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+ [DllImport("kernel32.dll", SetLastError=true)] static extern uint ResumeThread(IntPtr thread);
+ [DllImport("kernel32.dll", SetLastError=true)] static extern bool TerminateProcess(IntPtr process, uint code);
+ [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
+ [DllImport("kernel32.dll", SetLastError=true)] static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool result);
+ [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+ static IntPtr job;
+ static void Check(bool ok) { if(!ok) throw new System.ComponentModel.Win32Exception(); }
+ public static void Start(string command, string cwd) {
+  job=CreateJobObject(IntPtr.Zero,null); Check(job!=IntPtr.Zero);
+  var limits=new Limits(); limits.Basic.Flags=0x2000;
+  Check(SetInformationJobObject(job,9,ref limits,(uint)Marshal.SizeOf(typeof(Limits))));
+  var startup=new Startup(); startup.cb=(uint)Marshal.SizeOf(typeof(Startup)); Info info;
+  Check(CreateProcess(null,new StringBuilder(command),IntPtr.Zero,IntPtr.Zero,false,0x08000004,IntPtr.Zero,cwd,ref startup,out info));
+  try { Check(AssignProcessToJobObject(job,info.process)); Check(ResumeThread(info.thread)!=0xffffffff); }
+  catch { TerminateProcess(info.process,1); throw; }
+  finally { CloseHandle(info.thread); CloseHandle(info.process); }
+ }
+ public static bool Contains(uint pid, bool any) {
+  var process=OpenProcess(0x1000,false,pid); Check(process!=IntPtr.Zero);
+  try { bool result; Check(IsProcessInJob(process,any?IntPtr.Zero:job,out result)); return result; }
+  finally { CloseHandle(process); }
+ }
+ public static void Release() { if(job!=IntPtr.Zero) { CloseHandle(job); job=IntPtr.Zero; } }
+}
+'@
+function Quote-PS([string]$Value) { return "'" + $Value.Replace("'", "''") + "'" }
+$outcome = Join-Path $Fixture 'launch-result.json'
+$failure = Join-Path $Fixture 'launch-error.txt'
+$runtime = Join-Path $Fixture 'runtime'
+$command = '$ErrorActionPreference = "Stop"; try { & ' + (Quote-PS $Launcher) + ' -RuntimeDir ' + (Quote-PS $runtime) + ' -NodePath ' + (Quote-PS $NodePath) + ' -NoOpen | Set-Content -LiteralPath ' + (Quote-PS $outcome) + ' -Encoding UTF8 } catch { ($_ | Out-String) | Set-Content -LiteralPath ' + (Quote-PS $failure) + ' -Encoding UTF8; exit 1 }'
+$encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+$shell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+try {
+ [LauncherJob]::Start(('"' + $shell + '" -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ' + $encoded), $Fixture)
+ $deadline=[DateTime]::UtcNow.AddSeconds(35)
+ while(-not (Test-Path -LiteralPath $outcome)) { if(Test-Path -LiteralPath $failure) { throw (Get-Content -LiteralPath $failure -Raw) }; if([DateTime]::UtcNow -gt $deadline) { throw 'Synthetic launcher did not return' }; Start-Sleep -Milliseconds 100 }
+ $launched=Get-Content -LiteralPath $outcome -Raw | ConvertFrom-Json
+ $observed=@{processId=$launched.processId; brokerInFixtureJob=[LauncherJob]::Contains($launched.processId,$false); brokerInAnyJob=[LauncherJob]::Contains($launched.processId,$true)}
+ $observed | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $Fixture 'job-observation.json') -Encoding UTF8
+ while(-not (Test-Path -LiteralPath (Join-Path $Fixture 'release-job'))) { if([DateTime]::UtcNow -gt $deadline) { throw 'Synthetic job release timed out' }; Start-Sleep -Milliseconds 100 }
+} finally { [LauncherJob]::Release() }
+`;
+
+test('independent broker survives closing its launcher Job and still shuts down gracefully', { timeout: 60000 }, async () => {
+  const fixture = await tempRuntime(), runtime = join(fixture, 'runtime');
+  const harness = join(fixture, 'job-harness.ps1');
+  let pid, child, exited;
+  try {
+    // Reproduce the broker's native-owner discovery spawning a child. libuv
+    // assigns Node to its own Job, which must not be mistaken for an inherited
+    // launcher Job. Clear the preload in its child to prevent recursion.
+    const preload = join(fixture, 'preload.mjs');
+    await writeFile(preload, `import { spawnSync } from 'node:child_process';\nimport { isMainThread } from 'node:worker_threads';\nif (isMainThread && process.argv[2] === 'serve') spawnSync(process.execPath, ['--version'], { windowsHide: true, stdio: 'ignore', env: { ...process.env, NODE_OPTIONS: '' } });\n`);
+    await writeFile(harness, jobHarness);
+    child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', harness, '-Fixture', fixture, '-Launcher', script, '-NodePath', nodePath], { windowsHide: true, env: { ...process.env, NODE_OPTIONS: `--import "${pathToFileURL(preload).href}"` } });
+    let stderr = '';
+    child.stdout.resume(); child.stderr.setEncoding('utf8').on('data', data => { stderr += data; });
+    exited = new Promise(done => child.once('exit', code => done({ code, stderr })));
+    let observed;
+    for (let attempt = 0; attempt < 350; attempt++) {
+      try { observed = JSON.parse((await readFile(join(fixture, 'job-observation.json'), 'utf8')).replace(/^\uFEFF/, '')); break; }
+      catch (error) { if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error; }
+      if (child.exitCode !== null) break;
+      await new Promise(done => setTimeout(done, 100));
+    }
+    assert.ok(observed, `Synthetic job never reached readiness: ${stderr}`);
+    pid = observed.processId;
+    const first = await discoverService(runtime);
+    assert.equal(first.status, 'existing');
+    const api = await humanApi(first.url);
+    const created = await api('/rooms', { operationId: randomUUID(), name: 'Launcher lifetime test' });
+    await writeFile(join(fixture, 'release-job'), 'release');
+    const closed = await exited;
+    assert.equal(closed.code, 0, closed.stderr);
+    await new Promise(done => setTimeout(done, 250));
+    const after = await discoverService(runtime);
+    assert.equal(after.status, 'existing', 'Closing the launcher Job must not terminate the broker');
+    assert.equal(after.instanceId, first.instanceId);
+    assert.equal(observed.brokerInFixtureJob, false);
+    assert.equal(observed.brokerInAnyJob, true, 'Node may own a libuv Job after spawning its own subprocess');
+    const view = await api(`/rooms/${created.room.id}/control`);
+    assert.equal(view.room.id, created.room.id);
+    const reused = await ps(runtime);
+    assert.equal(reused.code, 0, reused.stderr);
+    assert.equal(JSON.parse(reused.stdout).instanceId, first.instanceId);
+    await api('/admin/shutdown', { expectedInstanceId: first.instanceId, shutdownId: randomUUID() });
+    let stopped = false;
+    for (let attempt = 0; attempt < 50; attempt++) {
+      if ((await discoverService(runtime)).status === 'startable') { stopped = true; break; }
+      await new Promise(done => setTimeout(done, 100));
+    }
+    assert.equal(stopped, true, 'Normal Quit must release the original runtime lock');
+  } finally {
+    if (child?.exitCode === null) { await writeFile(join(fixture, 'release-job'), 'release'); await exited; }
+    if (!pid) {
+      // Readiness can fail after independent creation. Never leave a synthetic
+      // orphan running merely because the parent did not return its result.
+      try { pid = JSON.parse(await readFile(join(runtime, 'broker-state.lock'), 'utf8')).pid; }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
+    // The process must be gone before deleting its synthetic runtime.
+    await terminateSynthetic(pid);
+    await removeTemp(fixture);
+  }
+});
 
 test('forced exit with committed WAL recovers once under concurrent launchers, preserving history and evidence', { timeout: 60000 }, async () => {
   const runtime = await tempRuntime();

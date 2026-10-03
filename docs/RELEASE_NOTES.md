@@ -2,6 +2,33 @@
 
 中文说明在每个版本的英文部分之后。
 
+## 0.3.4
+
+Keep the background service running independently of the app that launched it,
+and recover without mistaking an unchanged wait retry for changed data.
+
+- **Independent background service.** Closing or updating the app that launched
+  ThreadCrew no longer terminates its service through the launcher's Windows
+  process group. Agent sessions can still disconnect when their own apps close.
+- **Reliable startup and recovery.** A successful startup is recognized even when
+  the short-lived launch helper exits during readiness checks. Retrying the same
+  saved wait no longer rewrites identical state, avoiding the demonstrated
+  `SOURCE_CHANGED` recovery refusal.
+- **History protection remains.** Crash recovery still backs up and validates
+  data, rejects live owners or corrupt data, and permits only one broker writer.
+  Closing the browser keeps ThreadCrew running; **Quit ThreadCrew** stops it.
+- Update from 0.3.0 or later in **Settings → Updates**.
+
+**中文：** 后台服务独立运行，并修复相同等待状态重试引起的恢复误报。
+
+- **独立后台服务**：关闭或更新启动 ThreadCrew 的应用，不会通过启动器的 Windows
+  进程组一并终止服务。代理自己的应用关闭时，原会话仍可能断开。
+- **可靠启动与恢复**：启动辅助进程在就绪检查期间正常退出，不再被误判为启动失败。
+  重试相同等待状态不再重写相同内容，避免这次 `SOURCE_CHANGED` 恢复拒绝。
+- **继续保护历史数据**：崩溃恢复仍先备份和校验，拒绝仍在运行的旧进程及损坏数据，
+  并保持单一写入进程。关闭浏览器会继续后台运行；**退出 ThreadCrew** 才会停止服务。
+- 从 0.3.0 及以后的版本，可在 **设置 → 更新** 升级。
+
 ## 0.3.3
 
 Claude keeps receiving under Claude Code's time limit, work sessions can get more time, and direct
