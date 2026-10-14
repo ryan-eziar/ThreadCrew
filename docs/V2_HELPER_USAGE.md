@@ -92,6 +92,14 @@ instead of substituting identities or dropping the reconnect guard.
 
 For combined wait, a `NEW` notification with `workId` and `requestIds` belongs to the work inbox: use `work-checkpoint`, then the corresponding receipt/response helpers. An ordinary `NEW` / `NOTICE_PENDING` with `batchId` uses `read` → `post`. After draining the notified batch, arm the combined wait again while the grant remains active; after work ends, ordinary waiting is sufficient. This choice changes which notifications are listened for, not the broker's delivery eligibility or queue order.
 
+Claude `work-accept`, `work-received` and `work-response` results now include a
+`reception` hint while the original work remains active and unexpired. After
+checkpointing and recording every claimed receipt, follow `rearm_before_work`
+immediately, before longer review or implementation. Its `args` array uses this
+exact installation, runtime, room, binding and work. `preserve_pending_wait`
+means keep the original running/unresolved wait, never launch a duplicate.
+These hints do not spawn a process, call a model, renew a lease or extend work.
+
 `wait` also accepts `--window-ms N`: a positive integer at most 6,900,000 ms,
 the default 115-minute window. The HTTP field is optional `windowMs`. At window
 end it returns `WINDOW_END` with the unchanged `deadlineAt`, clears the completed
@@ -103,16 +111,25 @@ Lease `TIMEOUT`, `BINDING_INVALID` and `ROOM_ARCHIVED` end rearming. A user stop
 the background tool also ends it. Work ending alone returns to ordinary waiting.
 Read `AGENT_PROTOCOL.md` for authorization, bounded idle wakes and recovery errors.
 
+**Peer messages first.** The first work delivery contains
+`authorizedScope.communicationPolicy`. Every `work-accept` result and
+`work-status` supplies `communication.peerRequestArgs` with this installation,
+room, task and exact peer binding. Replace MESSAGE_FILE with your UTF-8 message
+file and OPERATION_ID with one stable operation ID. Choose `--kind handoff`,
+`review_request` or `blocker` as appropriate. Use `work-response` for an exact
+claimed answer. State/progress helper results explicitly report
+`displayUpdate.deliveredToPeer:false`; they do not substitute for a peer message.
+
 All work commands require `--room ROOM --as ROLE --binding BINDING --work WORK`. `--op` is an optional stable operation ID; supply it when scripting. Without it the helper generates and persists one before HTTP, then reuses it after an unknown result. Until that operation is resolved, a changed payload or new ID for the same action is rejected. Text comes from a UTF-8 file and the exact payload is saved locally before sending.
 
 ```text
 node chat.mjs work-accept --room ROOM --as ROLE --binding BINDING --work WORK --delivery DELIVERY --claim CLAIM --accept true --file acceptance.txt --op OP
-node chat.mjs work-progress --room ROOM --as ROLE --binding BINDING --work WORK --file progress.txt --op OP
 node chat.mjs work-request --room ROOM --as ROLE --binding BINDING --work WORK --to-binding PEER_BINDING --kind review_request --file request.txt --op OP
 node chat.mjs work-checkpoint --room ROOM --as ROLE --binding BINDING --work WORK [--request REQUEST] --op OP
 node chat.mjs work-status --room ROOM --as ROLE --binding BINDING --work WORK
 node chat.mjs work-received --room ROOM --as ROLE --binding BINDING --work WORK --request REQUEST --claim CLAIM --op OP
 node chat.mjs work-response --room ROOM --as ROLE --binding BINDING --work WORK --request REQUEST --claim CLAIM --file response.txt --op OP
+node chat.mjs work-progress --room ROOM --as ROLE --binding BINDING --work WORK --file progress.txt --op OP
 node chat.mjs work-state --room ROOM --as ROLE --binding BINDING --work WORK --expected-version 3 --state working --file state.txt --op OP
 ```
 

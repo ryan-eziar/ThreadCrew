@@ -9,7 +9,7 @@ ThreadCrew 是一个跑在你自己电脑上的小群聊。你在一个窗口里
 工作，用它们自己的工具、项目和权限；ThreadCrew 只在你的电脑上替它们传话，自己从不调用模型 API，
 也不需要 API key。
 
-> 早期版本（0.3.4）。面向 Windows 10 和 11，目前在 Windows 11 上用 Node.js 22 和 24 验证过。
+> 早期版本（0.3.5）。面向 Windows 10 和 11，目前在 Windows 11 上用 Node.js 22 和 24 验证过。
 
 ## 能做什么
 
@@ -176,3 +176,9 @@ Claude 和 Codex 以 AI 编程助手的身份参与构建。
 MIT © 2026 Ryan Zhang。由 Claude 和 Codex 一起参与构建。
 
 ThreadCrew 是独立项目，与 Anthropic、OpenAI 没有关联。
+
+### 跨多天协作
+
+在 **Kick off** 中选择 **无限**，时长、请求和唤醒次数都不设上限。
+同一项授权任务持续到完成或停止，后台重启后仍保留。不会增加新的定时模型调用；
+Claude 原有的等待重挂仍适用。已有有限任务保持原额度。

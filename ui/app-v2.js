@@ -25,7 +25,7 @@
   // Work budgets: [requests, wake-ups], ceilings rather than targets. A request round trip wakes two
   // sessions (the request, then its answer), so wake-ups get twice the requests: the first real
   // work session used 10 requests and 18 wake-ups, and wake-ups ran out first.
-  const PRESETS = { small: [12, 24, t('小')], standard: [24, 48, t('标准')], large: [48, 96, t('大')] };
+  const PRESETS = { small: [12, 24, t('小')], standard: [24, 48, t('标准')], large: [48, 96, t('大')], unlimited: [null, null, t('无限')] };
   const BUDGET_STEP = { requests: 12, wakes: 24 }; // one "+" in the header or the work popover
   const TIME_STEPS_H = [1, 2, 5]; // the work popover's "more time" choices; the header "+" adds the first
   // Files the broker accepts, by extension; it checks the type against the name and the content.
@@ -193,6 +193,7 @@
   }
   const minutesSince = (iso) => Math.max(0, Math.floor((serverNow() - Date.parse(iso)) / 60000));
   function timeLeft(iso) {
+    if (iso === null) return t('不限时长');
     const m = Math.floor((Date.parse(iso) - serverNow()) / 60000);
     if (m <= 0) return t('已到期');
     return m >= 60 ? t('剩 {0} 小时 {1} 分', Math.floor(m / 60), m % 60) : t('剩 {0} 分钟', m);
@@ -1492,12 +1493,17 @@
     if (reason) { flash(reason, 'warn'); return; }
     if (!writable() || st.ops.has(rk('send'))) return;
     const objective = ($('work-objective').value || text.split('\n')[0]).trim().slice(0, 240);
-    const [requestLimit, wakeLimit] = PRESETS[st.composer.preset];
     const expectedBindings = Object.fromEntries(c.members.map((m) => [m.agent, m.binding.id]));
     runOp(rk('send'), roomPath('/work'), {
       operationId: uuid(), expectedGate: c.room.gate, expectedBindings, text, attachmentIds: files.map((a) => a.id),
-      objective, requestLimit, wakeLimit, durationSeconds: Math.min(st.composer.hours, 10) * 3600,
+      objective, ...workSettings(st.composer.preset, st.composer.hours),
     }, afterSend(st.currentRoomId, text, files));
+  }
+
+  function workSettings(preset, hours) {
+    if (preset === 'unlimited') return { unlimited: true, requestLimit: null, wakeLimit: null, durationSeconds: null };
+    const [requestLimit, wakeLimit] = PRESETS[preset];
+    return { requestLimit, wakeLimit, durationSeconds: Math.min(hours, 10) * 3600 };
   }
 
   // "Kick off with this plan": Ryan picks the one agent reply he agrees with, and its full text (not a
@@ -2735,6 +2741,7 @@
   }
   // Why no time can be added: the broker's reason, or the whole-length cap; null while time can be added.
   function addTimeHint(w) {
+    if (w.unlimited) return null;
     const a = w.actions && w.actions.addTime;
     if (!w.timeBudget || !a) return null;
     const hours = Math.round(w.timeBudget.maxSeconds / 3600);
@@ -3390,6 +3397,8 @@
 
   // An allowance as a small track: how much is left of the limit.
   function meter(label, left, limit) {
+    if (limit === null) return h('span', { class: 'meter', title: t('无限') },
+      h('span', { class: 'meter-label' }, label), h('span', { class: 'meter-num' }, '∞'));
     const pct = limit > 0 ? Math.max(0, Math.min(100, Math.round((left / limit) * 100))) : 0;
     return h('span', { class: `meter${pct <= 20 ? ' is-low' : ''}`, title: `${label} ${left}/${limit}` },
       h('span', { class: 'meter-label' }, label),
@@ -3428,6 +3437,8 @@
   // still be added (the same action as in the work popover). Low turns amber, none left red.
   function budgetMeter(w, kind) {
     const b = kind === 'requests' ? w.requestBudget : w.wakeBudget;
+    if (b.limit === null) return h('span', { class: 'work-meter', title: t('无限模式，已用 {0}', b.used) },
+      h('span', { class: 'wm-label' }, kind === 'requests' ? t('请求余量') : t('唤醒余量')), h('span', { class: 'wm-num' }, '∞'));
     const pct = b.limit > 0 ? Math.max(0, Math.min(100, Math.round((b.remaining / b.limit) * 100))) : 0;
     const tone = b.remaining <= 0 ? ' tone-bad' : pct <= 20 ? ' tone-warn' : '';
     const canAdd = Boolean(w.actions && w.actions.addBudget && w.actions.addBudget.enabled);
@@ -3458,6 +3469,8 @@
   function timeMeter(w) {
     const tb = w.timeBudget;
     if (!tb) return null;
+    if (w.unlimited) return h('span', { class: 'work-meter', title: t('不限时长，直到完成或停止') },
+      h('span', { class: 'wm-label' }, t('时间余量')), h('span', { class: 'wm-num' }, '∞'));
     const left = Math.max(0, Math.floor((Date.parse(w.expiresAt) - serverNow()) / 1000));
     const pct = tb.limitSeconds > 0 ? Math.max(0, Math.min(100, Math.round((left / tb.limitSeconds) * 100))) : 0;
     const tone = left <= 0 ? ' tone-bad' : pct <= 20 ? ' tone-warn' : '';
@@ -3511,7 +3524,7 @@
       workAuthority(w.authority, true),
       h('div', { class: `work-state${paused ? ' tone-warn' : ''}` },
         `${COORDINATION[w.coordinationState] || w.coordinationState}${paused && pausedWhat ? t('（{0}用完）', pausedWhat) : ''} · ${timeLeft(w.expiresAt)}`
-        + (['active', 'paused_budget'].includes(w.coordinationState) ? t('，到 {0} 结束', fmtTime(w.expiresAt)) : '')),
+        + (!w.unlimited && ['active', 'paused_budget'].includes(w.coordinationState) ? t('，到 {0} 结束', fmtTime(w.expiresAt)) : '')),
       timeHint && ['active', 'paused_budget'].includes(w.coordinationState) ? h('div', { class: 'hint' }, timeHint) : null,
       h('ul', { class: 'work-people' }, participants),
       h('div', { class: 'work-meters' },
@@ -4416,6 +4429,7 @@
     if (st.composer.work) {
       $('work-preset').value = st.composer.preset;
       $('work-hours').value = String(st.composer.hours);
+      $('work-hours').hidden = st.composer.preset === 'unlimited';
       const obj = $('work-objective');
       if (!obj.value && input.value) obj.placeholder = snippet(input.value.split('\n')[0], 60);
     }
@@ -4448,7 +4462,8 @@
       content = t('不能开工：{0}', reason);
     } else if (st.composer.work) {
       const [rq, wk] = PRESETS[st.composer.preset];
-      content = t('开工后两位可以在本群直接互相请求、审查：最多 {0} 条请求、{1} 次额外唤醒，{2} 小时内有效，随时可以停止。', rq, wk, st.composer.hours);
+      content = st.composer.preset === 'unlimited' ? t('无限模式：不限时长、请求和唤醒次数，直到完成或你停止。仅限本次授权的任务。')
+        : t('开工后两位可以在本群直接互相请求、审查：最多 {0} 条请求、{1} 次额外唤醒，{2} 小时内有效，随时可以停止。', rq, wk, st.composer.hours);
     } else if (c.room.state === 'stopped') {
       content = t('已停止。发新消息会开始新的一段，已取消的消息不会恢复。');
     } else {
@@ -4676,7 +4691,7 @@
             h('div', { id: 'work-row', class: 'work-row', hidden: true },
               h('span', { class: 'work-row-label' }, icon('zap', 14), t('开工设置')),
               h('input', { id: 'work-objective', type: 'text', maxlength: '240', placeholder: t('任务目标（一句话，默认取消息第一行）'), 'aria-label': t('任务目标') }),
-              h('select', { id: 'work-preset', 'aria-label': t('协作额度') }, Object.entries(PRESETS).map(([k, [rq, wk, label]]) => h('option', { value: k }, t('{0}额度 · {1} 条请求 / {2} 次唤醒', label, rq, wk)))),
+              h('select', { id: 'work-preset', 'aria-label': t('协作额度') }, Object.entries(PRESETS).filter(([k]) => k !== 'unlimited' || capabilities.unlimitedWork === true).map(([k, [rq, wk, label]]) => h('option', { value: k }, k === 'unlimited' ? t('无限 · 不限时间和次数') : t('{0}额度 · {1} 条请求 / {2} 次唤醒', label, rq, wk)))),
               h('select', { id: 'work-hours', 'aria-label': t('有效期') }, [2, 4, 10].map((n) => h('option', { value: String(n), selected: n === 10 }, t('{0} 小时内有效', n)))),
               h('button', { type: 'button', id: 'work-close', class: 'icon-btn', 'aria-label': t('取消开工'), title: t('取消开工') }, icon('x', 14))),
             h('div', { id: 'attach-strip', class: 'attach-strip', hidden: true }),

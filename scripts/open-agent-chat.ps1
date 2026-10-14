@@ -22,7 +22,7 @@ function Get-Advice([string]$detail) {
     if ($detail -match 'Another ThreadCrew launcher') {
         return 'Another launch is in progress. Wait a few seconds and try again.'
     }
-    if ($detail -match 'has not passed authenticated readiness|did not finish within 90 seconds') {
+    if ($detail -match 'has not passed authenticated readiness|still running after') {
         return 'Startup is taking longer than usual. Wait briefly and try again; the launcher reuses the same service.'
     }
     if ($detail -match 'Node') {
@@ -57,6 +57,9 @@ if (-not $NoUi) {
 }
 
 $ok = $false
+$pending = $false
+$finished = $false
+$proc = $null
 $url = $null
 $detail = ''
 $outFile = [System.IO.Path]::GetTempFileName()
@@ -75,11 +78,28 @@ try {
     $psi.UseShellExecute = $true
     $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
     $proc = [System.Diagnostics.Process]::Start($psi)
-    $finished = $proc.WaitForExit(90000)
+    # Crash recovery must copy and fsync every saved file before startup. The
+    # outer window must not declare failure while that verified work continues.
+    $watch = [System.Diagnostics.Stopwatch]::StartNew()
+    $waitLimit = [TimeSpan]::FromMinutes(20)
+    do {
+        $finished = $proc.WaitForExit(250)
+        if ($finished) { break }
+        if ($splash) {
+            $elapsed = '{0}:{1:00}' -f [int][Math]::Floor($watch.Elapsed.TotalMinutes), $watch.Elapsed.Seconds
+            $label.Text = if (Test-Path -LiteralPath (Join-Path $RuntimeDir 'broker-state.lock')) {
+                "Checking saved history… $elapsed`nAfter shutdown, this can take several minutes."
+            } else { "Opening ThreadCrew… $elapsed" }
+            [System.Windows.Forms.Application]::DoEvents()
+            $splash.Refresh()
+        }
+    } while ($watch.Elapsed -lt $waitLimit)
+    $watch.Stop()
     $text = ((Get-Content -LiteralPath $outFile -Raw -ErrorAction SilentlyContinue) + "`n" +
              (Get-Content -LiteralPath $errFile -Raw -ErrorAction SilentlyContinue)).Trim()
     if (-not $finished) {
-        $detail = "Launcher did not finish within 90 seconds. $text"
+        $pending = $true
+        $detail = "Launcher is still running after 20 minutes. Recovery was not stopped. Reopen ThreadCrew later to reuse its verified result. Output: $outFile Error: $errFile $text"
     } elseif ($proc.ExitCode -eq 0) {
         $line = ($text -split "`r?`n" | Where-Object { $_.Trim().StartsWith('{') } | Select-Object -Last 1)
         $result = $line | ConvertFrom-Json
@@ -97,7 +117,8 @@ try {
     $detail = $_.Exception.Message
 } finally {
     if ($splash) { $splash.Close(); $splash.Dispose() }
-    Remove-Item -LiteralPath $outFile, $errFile -ErrorAction SilentlyContinue
+    # Do not remove files still owned by a running launcher after a UI timeout.
+    if ($finished -or -not $proc) { Remove-Item -LiteralPath $outFile, $errFile -ErrorAction SilentlyContinue }
 }
 
 if ($ok) {
@@ -108,13 +129,13 @@ if ($ok) {
 
 $advice = Get-Advice $detail
 if ($NoUi) {
-    Write-Output "FAILED $advice"
+    Write-Output "$(if ($pending) { 'IN_PROGRESS' } else { 'FAILED' }) $advice"
     Write-Output "DETAIL $detail"
-    exit 1
+    if ($pending) { exit 2 } else { exit 1 }
 }
 $answer = [System.Windows.Forms.MessageBox]::Show(
     "$advice`n`nYes: copy details. No: close.",
-    'ThreadCrew could not open',
+    $(if ($pending) { 'ThreadCrew is still opening' } else { 'ThreadCrew could not open' }),
     [System.Windows.Forms.MessageBoxButtons]::YesNo,
     [System.Windows.Forms.MessageBoxIcon]::Warning)
 if ($answer -eq [System.Windows.Forms.DialogResult]::Yes) { Set-Clipboard -Value $detail }

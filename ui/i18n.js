@@ -765,6 +765,12 @@
     '之后又有了新消息，或者群停止了、成员变了，所以没有开工。': 'A newer message came in, or the room stopped or its members changed, so no work session started.',
     '查看你的消息': 'See your message',
     '确认的方案': 'The confirmed plan',
+    '无限': 'Unlimited',
+    '不限时长': 'No time limit',
+    '无限 · 不限时间和次数': 'Unlimited · no time or count limits',
+    '无限模式，已用 {0}': 'Unlimited mode, {0} used',
+    '不限时长，直到完成或停止': 'No time limit, until completed or stopped',
+    '无限模式：不限时长、请求和唤醒次数，直到完成或你停止。仅限本次授权的任务。': 'Unlimited mode: no time, request or wake-up limits until completed or stopped. Only for this authorized task.',
   };
 
   // English unless Chinese was chosen explicitly; the system or browser language is not consulted.

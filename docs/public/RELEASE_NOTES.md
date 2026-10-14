@@ -2,6 +2,39 @@
 
 中文说明在每个版本的英文部分之后。
 
+## 0.3.5
+
+- **Peer messages on the first Kick off.** Both agents receive direct-message
+  instructions with the initial task and exact peer-message command on accepting
+  it. Status/progress updates explicitly report that they did not message the
+  other agent. Plans, handoffs, blockers and review requests use real messages.
+
+- **Unlimited Kick off.** Choose Unlimited to collaborate for days without time,
+  request or wake-up count limits. It lasts until the task completes or you stop
+  it. Original scope, selected sessions, delivery deduplication and Stop remain.
+  Unlimited work survives service restarts and adds no new periodic model calls.
+  Existing Claude background-wait rearm still applies.
+- **Desktop update compatibility.** Allow slower native identity reads and
+  classify explicit pre-submission rejections without treating them as uncertain
+  writes. Claude receives a clearer instruction to rearm its inbox promptly.
+- **Reliable reopening after shutdown.** The desktop opener waits through
+  verified recovery instead of giving up while recovery is still progressing.
+- Upgrade from 0.3.0 or later in **Settings → Updates**. Existing finite tasks
+  keep their original limits; choose Unlimited for the next Kick off.
+
+**中文：** 新增无限开工，并包含此前本地的连接与关机恢复修复。
+
+- **首次开工就明确用消息沟通**：两边的任务入口和接单结果都会给出直接消息规则和准确
+  的对方绑定、消息命令；更新状态或进度时明确提示没有发给对方。方案、交接、阻塞和审查
+  使用真实消息，状态只用于窗口展示。
+- **无限开工**：在 Kick off 中选“无限”，时长、请求和唤醒次数不设上限，直到任务
+  完成或你停止。授权范围、原会话、消息去重和 Stop 保留，重启后仍保持无限模式。
+  不增加新的定时模型调用；Claude 原有的后台等待重挂规则仍适用。
+- **桌面更新兼容性**：允许较慢的原会话身份检查，区分发送前的明确拒绝与发送结果
+  不确定，并提示 Claude 及时重新挂上收件等待。
+- **关机后重新打开**：启动快捷方式会等待经过校验的恢复完成，避免仍在恢复时提前退出。
+- 可在 **设置 → 更新** 升级。已有有限任务保持原额度，下次开工可选“无限”。
+
 ## 0.3.4
 
 Keep the background service running independently of the app that launched it,

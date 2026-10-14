@@ -157,7 +157,7 @@ export class V2Broker extends EventEmitter {
   get workspaceId() { return this.#workspaceId; }
   get runtimeDir() { return this.#runtimeDir; }
   get store() { return this.#store; }
-  get capabilities() { return { apiVersion: API_VERSION, contentFormats: ['plain', 'markdown'], discussionFinishPolicies: ['first_done', 'both_same_round'] }; }
+  get capabilities() { return { apiVersion: API_VERSION, contentFormats: ['plain', 'markdown'], discussionFinishPolicies: ['first_done', 'both_same_round'], unlimitedWork: true }; }
   async recheckNativeConnections() {
     if(!this.#transport?.probe)return;
     const bindings=await this.#store.read(sql=>sql.all("SELECT b.id,b.native_session_id FROM bindings b JOIN rooms r ON r.id=b.room_id WHERE b.current=1 AND b.agent='codex' AND r.lifecycle='open' ORDER BY b.joined_at LIMIT 50"));

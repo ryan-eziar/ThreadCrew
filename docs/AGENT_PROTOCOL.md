@@ -52,9 +52,11 @@ unarchived room still permits waiting and exact-seat reconnect, ready for the
 next new human message. It cannot resume stopped work or forward stopped mail.
 
 The [official tools reference](https://code.claude.com/docs/en/tools-reference#time-limit-for-background-commands)
-documents the default 30-minute background limit and two-hour explicit timeout
-maximum. It also documents configuration overrides; this protocol does not
-change the user's Claude settings or assume overrides are installed.
+now limits unattended sessions: since Claude Code 2.1.288, local terminal,
+Desktop and VS Code background commands have no background time limit. Earlier
+2.1.285-2.1.287 builds applied the default 30-minute / explicit two-hour limit
+to every session. Keep the bounded 115-minute ThreadCrew window and explicit
+tool timeout for compatibility. This protocol does not change Claude settings.
 
 During work, Codex native delivery remains automatic when same-turn timing
 evidence expires after an app or adapter update. `next_turn` does not guarantee
@@ -102,6 +104,17 @@ model or posts a reply. Install/remove it explicitly with
 Untrusted hooks are skipped. A configured file is not proof of activation.
 
 ## Work collaboration
+
+**Messages reach the peer; status does not.** On every new room's first Kick off,
+read `authorizedScope.communicationPolicy`, then the `communication` object in
+your acceptance result. It supplies the exact peer binding and request command.
+Send `work-request` for a plan, ownership agreement, handoff, blocker or review
+that the peer must act on, and use `work-response` to answer a claimed request.
+Changing to `awaiting_review`, `blocked` or `completed`, or placing a note in
+`work-state` / `work-progress`, only updates the human's display. It does not
+notify the peer. Those helper results explicitly say `deliveredToPeer:false`.
+Send the actual message before waiting for the peer's action; do not wait for
+the human to remind you. Display updates may follow the message.
 
 New requirements default to discussion. A room showing Working does not authorize
 unrelated implementation. Continue already approved work within its agreed scope.
@@ -153,6 +166,14 @@ For Claude during an active work grant:
 ```text
 node <install>/chat.mjs wait --room ROOM --as claude --binding BINDING --scope all --work WORK --runtime-dir RUNTIME
 ```
+
+After checkpointing a work notification and recording its exact receipts, rearm
+one combined background wait immediately, **before** doing the requested review,
+analysis or implementation. The receipt helper returns an exact reception hint.
+Preserve an already running or unresolved wait instead of starting a second one.
+For ordinary messages, drain the notified batch and rearm before longer work.
+Being busy does not keep a completed background wait alive. Delaying rearm until
+the answer is finished creates real gaps in reception and queues later messages.
 
 `workId` plus `requestIds` means the work inbox: checkpoint, then record the exact
 receipt. A request gets one complete work response. A response gets a receipt

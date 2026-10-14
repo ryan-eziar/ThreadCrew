@@ -38,6 +38,43 @@ async function joinV2(f) {
 }
 const binding = ['--room', 'room-a', '--as', 'claude', '--binding', 'binding-a'];
 
+test('first work acceptance gives Claude an executable exact-peer message command and preserves display-only warnings',async t=>{
+  const guide={instruction:'Send work-request; status is display-only.',peerBindingId:'binding-codex',peerRequestArgs:['work-request','--room','room-a','--as','claude','--binding','binding-a','--work','work-a','--to-binding','binding-codex','--kind','handoff','--file','MESSAGE_FILE','--op','OPERATION_ID']};
+  const f=await fixture(t,({path})=>path.endsWith('/join')?{bindingId:'binding-a',agent:'claude',nativeSessionId:'native-a',credential:'binding-secret'}:{workId:'work-a',communication:guide,displayUpdate:{deliveredToPeer:false},work:{coordinationState:'active',unlimited:true,expiresAt:null}});
+  await joinV2(f);const file=join(f.runtimeDir,'accept.txt');await writeFile(file,'Synthetic acceptance');
+  const accepted=await f.run('work-accept',...binding,'--work','work-a','--delivery','delivery-a','--claim','claim-a','--file',file,'--accept','true','--op','first-accept');
+  assert.equal(accepted.communication.peerRequestArgs[0],'node');assert.match(accepted.communication.peerRequestArgs[1],/chat\.mjs$/);
+  assert.deepEqual(accepted.communication.peerRequestArgs.slice(-2),['--runtime-dir',f.runtimeDir]);
+  assert.ok(accepted.communication.peerRequestArgs.includes('binding-codex'));
+  assert.equal(accepted.reception.action,'rearm_before_work');
+  const status=await f.run('work-status',...binding,'--work','work-a');
+  assert.equal(status.communication.peerRequestArgs[0],'node');
+  assert.equal(f.calls.some(c=>c.path.endsWith('/requests')),false,'instructions do not send a message or call a model themselves');
+});
+
+test('Claude receipts prompt immediate rearm but preserve an existing wait and never renew work',async t=>{
+  let coordinationState='active';
+  const f=await fixture(t,({path,body})=>path.endsWith('/join')
+    ?{bindingId:'binding-a',agent:'claude',nativeSessionId:'native-a',credential:'binding-secret'}
+    :{workId:'work-a',requestId:body.requestId,work:{coordinationState,expiresAt:'2099-01-01T00:00:00Z'}});
+  await joinV2(f);
+  const args=['work-received',...binding,'--work','work-a','--request','request-a','--claim','claim-a'];
+  const first=await f.run(...args,'--op','receipt-first');
+  assert.equal(first.reception.action,'rearm_before_work');
+  assert.deepEqual(first.reception.args.slice(2),['wait',...binding,'--scope','all','--work','work-a','--runtime-dir',f.runtimeDir]);
+  assert.match(first.reception.instruction,/before continuing analysis/);
+  const saved=JSON.parse(await readFile(f.clientPath,'utf8'));
+  const pending={requestId:'existing-wait',notificationScopes:['ordinary','work'],workId:'work-a',windowMs:1000};
+  saved.v2.pendingWait=pending;await writeFile(f.clientPath,JSON.stringify(saved));
+  const second=await f.run(...args,'--op','receipt-second');
+  assert.equal(second.reception.action,'preserve_pending_wait');
+  assert.equal(second.reception.args,undefined);
+  assert.deepEqual(JSON.parse(await readFile(f.clientPath,'utf8')).v2.pendingWait,pending);
+  coordinationState='stopped';
+  assert.equal((await f.run(...args,'--op','receipt-stopped')).reception,undefined);
+  assert.equal(f.calls.filter(c=>c.path.endsWith('/wait')).length,0,'hints never start a detached waiter or a native model');
+});
+
 test('retrying an unavailable broker preserves the pending wait file identity until its result changes',async t=>{
   let unavailable=true;
   const f=await fixture(t,({path})=>path.endsWith('/join')

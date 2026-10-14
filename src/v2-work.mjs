@@ -4,6 +4,8 @@ import { readAttachmentBytes } from './broker-storage.mjs';
 import { V2BrokerError } from './v2-broker.mjs';
 import { workAuthorization } from './delivery-authority.mjs';
 import { confirmStart, pendingKickoff, startContext } from './work-start-confirmation.mjs';
+import { UNLIMITED_WORK_DB_EXPIRY, workExpired, workUnexpired, budgetExhausted } from './work-limits.mjs';
+import { workCommunication } from './work-communication.mjs';
 
 const agents = ['codex', 'claude'];
 const receiveModes = new Set(['unverified', 'next_step', 'next_turn', 'unavailable']);
@@ -85,7 +87,7 @@ export class WorkCoordinator {
   }
   participant(w, bindingId) { const p = w.participants.find(p => p.bindingId === bindingId); if (!p) reject('FORBIDDEN', 403); return p; }
   async requireActive(ctx, w, bindingId = null) {
-    if (!active(w) || w.occupancy !== 'held' || Date.parse(w.expiresAt) <= this.clock()) reject('WORK_NOT_ACTIVE');
+    if (!active(w) || w.occupancy !== 'held' || workExpired(w, this.clock())) reject('WORK_NOT_ACTIVE');
     if (ctx.room.lifecycle !== 'open' || ctx.room.stopped_at || ctx.room.gate_segment_id !== w.segmentId) reject('ROOM_STOPPED');
     for (const p of w.participants) {
       const b = await ctx.getBinding(p.bindingId);
@@ -95,16 +97,16 @@ export class WorkCoordinator {
   }
   async saveWork(ctx, w) {
     w.version++;
-    w.requestBudget.remaining = w.requestBudget.limit - w.requestBudget.used;
-    w.wakeBudget.remaining = w.wakeBudget.limit - w.wakeBudget.used;
+    w.requestBudget.remaining = w.requestBudget.limit === null ? null : w.requestBudget.limit - w.requestBudget.used;
+    w.wakeBudget.remaining = w.wakeBudget.limit === null ? null : w.wakeBudget.limit - w.wakeBudget.used;
     if (active(w)) {
-      w.pauseReasons = [w.requestBudget.remaining <= 0 ? 'request_budget' : null, w.wakeBudget.remaining <= 0 ? 'wake_budget' : null].filter(Boolean);
+      w.pauseReasons = [budgetExhausted(w.requestBudget) ? 'request_budget' : null, budgetExhausted(w.wakeBudget) ? 'wake_budget' : null].filter(Boolean);
       w.coordinationState = w.pauseReasons.length ? 'paused_budget' : 'active';
     }
     w._possibleRunningAgents = (await this.summary(ctx.sql, w)).possibleRunningAgents;
     await ctx.sql.run(`INSERT INTO work_sessions(id,room_id,segment_id,version,occupancy,state,expires_at,binding_codex,binding_claude,data_json)
       VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET version=excluded.version,occupancy=excluded.occupancy,state=excluded.state,expires_at=excluded.expires_at,data_json=excluded.data_json`,
-    [w.id,w.roomId,w.segmentId,w.version,w.occupancy,w.coordinationState,w.expiresAt,w.participants[0].bindingId,w.participants[1].bindingId,json(w)]);
+    [w.id,w.roomId,w.segmentId,w.version,w.occupancy,w.coordinationState,w.expiresAt ?? UNLIMITED_WORK_DB_EXPIRY,w.participants[0].bindingId,w.participants[1].bindingId,json(w)]);
     ctx.changes && (ctx.changes.catalog = true);
   }
   async saveRequest(ctx, r) {
@@ -128,15 +130,15 @@ export class WorkCoordinator {
     for (const row of kickoff) running.add(row.agent);
     result.possibleRunningAgents = agents.filter(a => running.has(a));
     result.needsHumanCount = w.participants.filter(p => p.workState === 'blocked').length;
-    const ended = !active(w) || w.occupancy !== 'held' || Date.parse(w.expiresAt) <= this.clock();
-    result.timeBudget = {
+    const ended = !active(w) || w.occupancy !== 'held' || workExpired(w, this.clock());
+    result.timeBudget = w.unlimited ? { unlimited: true, limitSeconds: null, remainingSeconds: null, maxSeconds: null, maxAddSeconds: 0 } : {
       limitSeconds: Math.round((Date.parse(w.expiresAt) - Date.parse(w.startedAt)) / 1000),
       remainingSeconds: Math.max(0, Math.ceil((Date.parse(w.expiresAt) - this.clock()) / 1000)),
       maxSeconds: MAX_WORK_SECONDS, maxAddSeconds: MAX_ADD_SECONDS
     };
     result.actions = {
-      addBudget: availability(ended ? 'WORK_NOT_ACTIVE' : null),
-      addTime: availability(ended ? 'WORK_NOT_ACTIVE' : result.timeBudget.limitSeconds >= MAX_WORK_SECONDS ? 'WORK_TIME_LIMIT' : null),
+      addBudget: availability(ended ? 'WORK_NOT_ACTIVE' : w.unlimited ? 'WORK_UNLIMITED' : null),
+      addTime: availability(ended ? 'WORK_NOT_ACTIVE' : w.unlimited ? 'WORK_UNLIMITED' : result.timeBudget.limitSeconds >= MAX_WORK_SECONDS ? 'WORK_TIME_LIMIT' : null),
       release: availability(w.occupancy === 'released' ? 'WORK_RELEASED' : ['stopped','expired','completed'].includes(w.coordinationState) ? null : 'WORK_MUST_BE_STOPPED_FIRST')
     };
     for (const p of result.participants) {
@@ -152,14 +154,19 @@ export class WorkCoordinator {
   async agentStatus(roomId,workId,bindingId){return this.broker.store.read(async sql=>{
     const w=await this.load(sql,roomId,workId);this.participant(w,bindingId);
     const authorizedScope=await workAuthorization(sql,roomId,workId,{includeText:true});
-    return {workId,work:await this.summary(sql,w),mode:'work',authorizedScope:{...authorizedScope,attachments:await this.attachmentManifest(sql,roomId,authorizedScope.attachmentIds)}};
+    return {workId,work:await this.summary(sql,w),mode:'work',communication:workCommunication(w,bindingId),authorizedScope:{...authorizedScope,attachments:await this.attachmentManifest(sql,roomId,authorizedScope.attachmentIds)}};
   });}
   async start(roomId, body) {
-    only(body, ['operationId','expectedGate','expectedBindings','text','attachmentIds','objective','requestLimit','wakeLimit','durationSeconds']);
+    only(body, ['operationId','expectedGate','expectedBindings','text','attachmentIds','objective','requestLimit','wakeLimit','durationSeconds','unlimited']);
     safeText(body.objective, 240); safeText(body.text);
     if (!body.expectedBindings || typeof body.expectedBindings !== 'object' || Array.isArray(body.expectedBindings) || Object.keys(body.expectedBindings).length !== 2 || !agents.every(a => typeof body.expectedBindings[a] === 'string')) reject('INVALID_INPUT', 400);
     if (!body.objective.trim() || !body.text.trim()) reject('INVALID_INPUT', 400);
-    boundedNumber(body.requestLimit, 1, 10000); boundedNumber(body.wakeLimit, 0, 10000); boundedNumber(body.durationSeconds, 60, 36000);
+    if (body.unlimited !== undefined && typeof body.unlimited !== 'boolean') reject('INVALID_INPUT',400);
+    if (body.unlimited === true) {
+      if (['requestLimit','wakeLimit','durationSeconds'].some(key => body[key] !== undefined && body[key] !== null)) reject('INVALID_INPUT',400);
+    } else {
+      boundedNumber(body.requestLimit, 1, 10000); boundedNumber(body.wakeLimit, 0, 10000); boundedNumber(body.durationSeconds, 60, 36000);
+    }
     const result = await this.broker.mutate('work.start', roomId, body, ctx => this.startTx(ctx,roomId,body));
     this.armExpiry(result.work); return result;
   }
@@ -177,7 +184,9 @@ export class WorkCoordinator {
       const source = sourceMessageId ? {messageId:sourceMessageId,deliveryIds:{},gate:{segmentId:ctx.room.gate_segment_id,version:ctx.room.gate_version}}
         : await ctx.addHumanMessage({ text:body.text,attachmentIds:body.attachmentIds,recipients:agents });
       if(sourceMessageId) for(const agent of agents) source.deliveryIds[agent]=(await ctx.addDelivery({agent,text:body.text,attachmentIds:body.attachmentIds,messageId:sourceMessageId})).id;
-      const w = { id:uid('work'),roomId,version:0,segmentId:source.gate.segmentId,sourceHumanMessageId:source.messageId,objective:body.objective,scopeSummary:'Only the user-authorized task in the selected native conversations',startedAt:ctx.now,expiresAt:new Date(Date.parse(ctx.now)+body.durationSeconds*1000).toISOString(),coordinationState:'active',pauseReasons:[],occupancy:'held',requestBudget:{limit:body.requestLimit,used:0,remaining:body.requestLimit},wakeBudget:{limit:body.wakeLimit,used:0,remaining:body.wakeLimit},participants,pendingRequestCount:0,needsHumanCount:0,possibleRunningAgents:[],actions:{},_nextRequestNumber:1,_kickoff:source.deliveryIds,_notifications:{},_progress:{} };
+      const unlimited = body.unlimited === true;
+      const requestLimit = unlimited ? null : body.requestLimit, wakeLimit = unlimited ? null : body.wakeLimit;
+      const w = { id:uid('work'),roomId,version:0,segmentId:source.gate.segmentId,sourceHumanMessageId:source.messageId,objective:body.objective,scopeSummary:'Only the user-authorized task in the selected native conversations',startedAt:ctx.now,expiresAt:unlimited ? null : new Date(Date.parse(ctx.now)+body.durationSeconds*1000).toISOString(),...(unlimited ? {unlimited:true} : {}),coordinationState:'active',pauseReasons:[],occupancy:'held',requestBudget:{limit:requestLimit,used:0,remaining:requestLimit},wakeBudget:{limit:wakeLimit,used:0,remaining:wakeLimit},participants,pendingRequestCount:0,needsHumanCount:0,possibleRunningAgents:[],actions:{},_nextRequestNumber:1,_kickoff:source.deliveryIds,_notifications:{},_progress:{} };
       w.authority=authority??{kind:'human_kickoff',sourceHumanMessageId:source.messageId,confirmations:[]};
       if(planText)w._planText=planText;
       for (const deliveryId of Object.values(source.deliveryIds)) await ctx.sql.run('UPDATE deliveries SET work_id=? WHERE id=?', [w.id,deliveryId]);
@@ -195,6 +204,7 @@ export class WorkCoordinator {
     if (!addRequests && !addWakes && !addSeconds) reject('INVALID_INPUT',400);
     const result = await this.broker.mutate(`work.budget:${workId}`,roomId,body,async ctx=>{
       const w=await this.load(ctx.sql,roomId,workId); await this.requireActive(ctx,w);
+      if(w.unlimited) reject('WORK_UNLIMITED');
       if(w.version!==body.expectedWorkVersion) reject('WORK_CHANGED');
       boundedNumber(w.requestBudget.limit+addRequests,1,10000); boundedNumber(w.wakeBudget.limit+addWakes,0,10000);
       if (addSeconds && Date.parse(w.expiresAt) + addSeconds * 1000 > Date.parse(w.startedAt) + MAX_WORK_SECONDS * 1000) reject('WORK_TIME_LIMIT');
@@ -228,14 +238,14 @@ export class WorkCoordinator {
     delete value.finalReplyId;
     value.deliveryBlockedReason=r.requestState==='queued'&&!['stopped','expired','completed'].includes(w.coordinationState)?r._routingBlockedReason??null:null;
     value.references??=[];value.responseDelivery=null;
-    const final=Boolean(r.finalReplyId), stopped=!active(w)||w.occupancy!=='held'||Date.parse(w.expiresAt)<=this.clock();
-    value.actions={abandon:availability(final?'FINAL_ALREADY_PRESENT':r.waitDisposition==='waiting'&&['claimed','awaiting_response','uncertain'].includes(r.requestState)?null:'REQUEST_NOT_WAITING'),resend:availability(final?'FINAL_ALREADY_PRESENT':stopped?'WORK_NOT_ACTIVE':w.requestBudget.remaining<=0?'REQUEST_BUDGET_EXHAUSTED':(['failed','uncertain'].includes(r.requestState)||r.waitDisposition==='abandoned')?null:'AWAITING_RESPONSE')};
+    const final=Boolean(r.finalReplyId), stopped=!active(w)||w.occupancy!=='held'||workExpired(w,this.clock());
+    value.actions={abandon:availability(final?'FINAL_ALREADY_PRESENT':r.waitDisposition==='waiting'&&['claimed','awaiting_response','uncertain'].includes(r.requestState)?null:'REQUEST_NOT_WAITING'),resend:availability(final?'FINAL_ALREADY_PRESENT':stopped?'WORK_NOT_ACTIVE':budgetExhausted(w.requestBudget)?'REQUEST_BUDGET_EXHAUSTED':(['failed','uncertain'].includes(r.requestState)||r.waitDisposition==='abandoned')?null:'AWAITING_RESPONSE')};
     return value;
   }
   async newRequest(ctx,w,p,body,resendOf=null) {
     const target=w.participants.find(other=>other.bindingId===body.toBindingId&&other.bindingId!==p.bindingId);
     if(!target||!['handoff','review_request','blocker'].includes(body.kind)) reject('INVALID_INPUT',400);
-    if(w.requestBudget.used>=w.requestBudget.limit) reject('REQUEST_BUDGET_EXHAUSTED');
+    if(w.requestBudget.limit!==null&&w.requestBudget.used>=w.requestBudget.limit) reject('REQUEST_BUDGET_EXHAUSTED');
     safeText(body.text); const attachmentIds=await this.checkAttachments(ctx.sql,w.roomId,body.attachmentIds??[]);
     if(!body.text.trim()&&!attachmentIds.length) reject('INVALID_INPUT',400);
     if(body.parentRequestId) await this.request(ctx.sql,w,body.parentRequestId);
@@ -350,7 +360,7 @@ export class WorkCoordinator {
         if(r.finalReplyId){if(r._finalHash!==finalHash)reject('FINAL_ALREADY_PRESENT');return{replyId:r.finalReplyId,requestId:r.requestId,lateReason:r._responseLateReason,duplicate:true,workId,work:await this.summary(ctx.sql,w)};}
         r._finalHash=finalHash;
         r.finalReplyId=uid('work-reply');r.requestState='answered';if(r.waitDisposition!=='abandoned')r.waitDisposition='resolved';
-        const late=r.waitDisposition==='abandoned'?'abandoned':w.coordinationState==='expired'||Date.parse(w.expiresAt)<=this.clock()?'expired':!active(w)?'stopped':ctx.room.gate_segment_id!==w.segmentId?'binding_changed':null;
+        const late=r.waitDisposition==='abandoned'?'abandoned':w.coordinationState==='expired'||workExpired(w,this.clock())?'expired':!active(w)?'stopped':ctx.room.gate_segment_id!==w.segmentId?'binding_changed':null;
         r._responseText=body.text;r._responseAttachmentIds=attachmentIds;r._responseLateReason=late;r._responseState=late?'cancelled':'queued';r._responseAt=ctx.now;
         r._responseContent=await ctx.createContent(body.text,'markdown');
         const e=await this.event(ctx,w,'response',p.agent,r._responseContent,{recipient:r.author,requestId:r.requestId,requestVersion:r.requestVersion+1,requestNumber:r.requestNumber,attachmentIds,lateReason:late,replyTo:{itemId:r._timelineId,requestId:r.requestId,author:r.author,previewText:[...r._text].slice(0,40).join(''),timelineOrder:(await ctx.sql.get('SELECT order_num FROM timeline WHERE id=?',[r._timelineId])).order_num,aroundCursor:await this.around(ctx.sql,w.roomId,r._timelineId)}});
@@ -368,12 +378,13 @@ export class WorkCoordinator {
         if(old!=='blocked'&&p.workState==='blocked')notice(ctx,w,'work_blocked',e,body.text||w.objective);
         result={participant:structuredClone(p)};
       }
-      await this.maybeComplete(ctx,w);await this.saveWork(ctx,w);return {...result,workId,work:await this.summary(ctx.sql,w)};
+      await this.maybeComplete(ctx,w);await this.saveWork(ctx,w);return {...result,workId,work:await this.summary(ctx.sql,w),communication:workCommunication(w,bindingId),
+        ...(['state','progress'].includes(method)?{displayUpdate:{deliveredToPeer:false,instruction:'This update is visible in the room only. To tell the other agent anything they must act on, send work-request using communication.peerRequestArgs.'}}:{})};
     },{gate:false});
   }
   async around(sql,roomId,itemId){const t=await sql.get('SELECT order_num FROM timeline WHERE id=? AND room_id=?',[itemId,roomId]);return t?Buffer.from(json({v:1,workspaceId:this.broker.workspaceId,roomId,direction:'around',order:t.order_num})).toString('base64url'):null;}
   async maybeComplete(ctx,w){
-    if(!active(w)||Date.parse(w.expiresAt)<=this.clock()||!w.participants.every(p=>p.acceptance==='accepted'&&p.workState==='completed'))return;
+    if(!active(w)||workExpired(w,this.clock())||!w.participants.every(p=>p.acceptance==='accepted'&&p.workState==='completed'))return;
     const remaining=await ctx.sql.get("SELECT COUNT(*) AS count FROM work_requests WHERE work_id=? AND (state NOT IN ('answered','failed','cancelled') OR json_extract(data_json,'$._responseState') IN ('queued','notified','claimed','uncertain','failed'))",[w.id]);
     if(remaining.count)return;w.coordinationState='completed';w.occupancy='released';w.pauseReasons=[];
     const e=await this.event(ctx,w,'ended','system',null);notice(ctx,w,'work_completed',e,w.objective);this.clearExpiry(w.id);
@@ -398,16 +409,17 @@ export class WorkCoordinator {
     timer.unref?.();this.attentionTimers.set(roomId,timer);
   }
   armExpiry(w){
-    if(!active(w)||w.occupancy!=='held')return;
     this.clearExpiry(w.id);
+    if(w.unlimited||!active(w)||w.occupancy!=='held')return;
     const timer=setTimeout(()=>{void this.expireAt(w).catch(()=>{});},Math.max(1,Date.parse(w.expiresAt)-this.clock()));
     timer.unref?.();this.timers.set(w.id,timer);
   }
   async expireAt(expected){
+    if(expected.unlimited)return{};
     return this.broker.mutate(`work.expire:${expected.id}`,expected.roomId,
       {operationId:`expiry-${expected.id}-${hash(expected.expiresAt).slice(0,12)}`},async ctx=>{
         const w=await this.load(ctx.sql,expected.roomId,expected.id);
-        if(w.expiresAt!==expected.expiresAt||Date.parse(w.expiresAt)>this.clock()||!active(w)||w.occupancy!=='held')return{};
+        if(w.unlimited||w.expiresAt!==expected.expiresAt||workUnexpired(w,this.clock())||!active(w)||w.occupancy!=='held')return{};
         return this.stopWork(ctx,'expired');
       },{gate:false});
   }
@@ -420,10 +432,10 @@ export class WorkCoordinator {
   }
   async nextNotification({roomId,bindingId,notificationScopes,workId}){
     if(!notificationScopes.includes('work')||!workId)return null;
-    const candidate=await this.broker.store.read(async sql=>{const w=await this.load(sql,roomId,workId);if(!active(w)||w.wakeBudget.remaining<=0||Date.parse(w.expiresAt)<=this.clock())return null;if(w._notifications[bindingId])return w._notifications[bindingId];const r=await sql.get("SELECT id FROM work_requests WHERE work_id=? AND ((to_binding_id=? AND state='queued') OR (json_extract(data_json,'$._fromBindingId')=? AND json_extract(data_json,'$._responseState')='queued')) LIMIT 1",[workId,bindingId,bindingId]);return r?{queued:true}:null;});
+    const candidate=await this.broker.store.read(async sql=>{const w=await this.load(sql,roomId,workId);if(!active(w)||budgetExhausted(w.wakeBudget)||workExpired(w,this.clock()))return null;if(w._notifications[bindingId])return w._notifications[bindingId];const r=await sql.get("SELECT id FROM work_requests WHERE work_id=? AND ((to_binding_id=? AND state='queued') OR (json_extract(data_json,'$._fromBindingId')=? AND json_extract(data_json,'$._responseState')='queued')) LIMIT 1",[workId,bindingId,bindingId]);return r?{queued:true}:null;});
     if(!candidate)return null;if(!candidate.queued)return candidate;
     const result=await this.broker.mutate(`work.notify:${workId}:${bindingId}`,roomId,{operationId:uid('op')},async ctx=>{
-      const w=await this.load(ctx.sql,roomId,workId);await this.requireActive(ctx,w,bindingId);if(w._notifications[bindingId])return{notification:w._notifications[bindingId]};if(w.wakeBudget.remaining<=0)return{notification:null};
+      const w=await this.load(ctx.sql,roomId,workId);await this.requireActive(ctx,w,bindingId);if(w._notifications[bindingId])return{notification:w._notifications[bindingId]};if(budgetExhausted(w.wakeBudget))return{notification:null};
       const rows=await ctx.sql.all("SELECT * FROM work_requests WHERE work_id=? AND ((to_binding_id=? AND state='queued') OR (json_extract(data_json,'$._fromBindingId')=? AND json_extract(data_json,'$._responseState')='queued')) ORDER BY request_number LIMIT 3",[workId,bindingId,bindingId]);if(!rows.length)return{notification:null};
       const notification={status:'NEW',notificationId:uid('work-notice'),roomId,workId,requestIds:rows.map(r=>r.id)};
       for(const row of rows){const r=parse(row);if(r._fromBindingId===bindingId)r._responseState='notified';else{r.requestState='notified';r.waitDisposition='waiting';r.waitingSince??=ctx.now;}await this.saveRequest(ctx,r);}
@@ -441,7 +453,7 @@ export class WorkCoordinator {
     member.canReceiveCollaboration=false;member.collaborationReceiveMode='unverified';member.collaborationEvidenceAt=null;member.workInboxActive=false;
     const w=await this.current(sql,roomId);if(!w||!member.binding)return member;const p=w.participants.find(p=>p.bindingId===member.binding.id);if(!p)return member;
     if(p.acceptance==='accepted'&&!['completed','stopped'].includes(p.workState)&&!['recovery_required','disconnected'].includes(member.state))member.state='busy';
-    if(!active(w)||Date.parse(w.expiresAt)<=this.clock()){member.collaborationReceiveMode='unavailable';return member;}
+    if(!active(w)||workExpired(w,this.clock())){member.collaborationReceiveMode='unavailable';return member;}
     member.workInboxActive=true;
     const armed=['armed','rearming'].includes(member.wait?.state)&&member.wait.workId===w.id&&member.wait.notificationScopes?.includes('work')&&Date.parse(member.wait.deadlineAt)>this.clock();
     const blocked=p.agent==='codex'?await sql.get("SELECT id FROM work_requests WHERE work_id=? AND json_extract(data_json,'$._routingBlockedReason')='NATIVE_UNAVAILABLE' AND ((to_binding_id=? AND state='queued') OR (json_extract(data_json,'$._fromBindingId')=? AND json_extract(data_json,'$._responseState')='queued')) LIMIT 1",[w.id,p.bindingId,p.bindingId]):null;
@@ -479,7 +491,7 @@ export class WorkCoordinator {
     if(w.coordinationState==='paused_budget')items.push({id:`budget-${w.id}`,kind:'work_budget',...ref,reason:'WORK_BUDGET_EXHAUSTED'});
     if(w.coordinationState==='expired')items.push({id:`expired-${w.id}`,kind:'work_expired',...ref,reason:'WORK_EXPIRED'});
     for(const p of w.participants.filter(p=>p.workState==='blocked'))items.push({id:`blocked-${w.id}-${p.agent}`,kind:'work_blocked',...ref,agent:p.agent,bindingId:p.bindingId,reason:'WORK_BLOCKED'});
-    if(active(w)&&Date.parse(w.expiresAt)>this.clock()){
+    if(active(w)&&workUnexpired(w,this.clock())){
       const blocked=await sql.all("SELECT * FROM work_requests WHERE work_id=? AND json_extract(data_json,'$._routingBlockedReason') IS NOT NULL AND (state='queued' OR json_extract(data_json,'$._responseState')='queued')",[w.id]);
       for(const row of blocked){const r=parse(row),response=r._responseState==='queued',itemId=response?r._responseTimelineId:r._timelineId;
         items.push({id:`routing-${r.requestId}`,kind:'work_receive_unavailable',...ref,requestId:r.requestId,agent:response?r.author:r.recipient,bindingId:response?r._fromBindingId:r._toBindingId,timelineItemId:itemId,aroundCursor:await this.around(sql,roomId,itemId),since:r._routingBlockedAt??w.startedAt,reason:r._routingBlockedReason});}
@@ -496,7 +508,7 @@ export class WorkCoordinator {
     const w=await this.current(sql,roomId);if(!w)return 0;
     const cutoff=new Date(this.clock()-30*60*1000).toISOString();
     const requests=await sql.get("SELECT COUNT(*) AS n FROM work_requests WHERE work_id=? AND wait_disposition!='abandoned' AND (state IN ('uncertain','failed') OR (state IN ('claimed','awaiting_response') AND json_extract(data_json,'$.waitingSince')<=?) OR json_extract(data_json,'$._responseState') IN ('uncertain','failed'))",[w.id,cutoff]);
-    const blocked=active(w)&&Date.parse(w.expiresAt)>this.clock()?await sql.get("SELECT COUNT(*) AS n FROM work_requests WHERE work_id=? AND json_extract(data_json,'$._routingBlockedReason') IS NOT NULL AND (state='queued' OR json_extract(data_json,'$._responseState')='queued')",[w.id]):{n:0};
+    const blocked=active(w)&&workUnexpired(w,this.clock())?await sql.get("SELECT COUNT(*) AS n FROM work_requests WHERE work_id=? AND json_extract(data_json,'$._routingBlockedReason') IS NOT NULL AND (state='queued' OR json_extract(data_json,'$._responseState')='queued')",[w.id]):{n:0};
     return requests.n+blocked.n+Number(['paused_budget','expired'].includes(w.coordinationState))+w.participants.filter(p=>p.workState==='blocked').length;
   }
   async markNativeBlocked(roomId,candidate,reason){
@@ -504,7 +516,7 @@ export class WorkCoordinator {
     if(prior&&JSON.parse(prior.data_json)._routingBlockedReason===reason)return;
     await this.broker.mutate('work.routingBlocked',roomId,{operationId:uid('op')},async ctx=>{
       const w=await this.load(ctx.sql,roomId,candidate.workId),r=await this.request(ctx.sql,w,candidate.requestId);
-      if(!active(w)||Date.parse(w.expiresAt)<=this.clock()||!((r._toBindingId===candidate.bindingId&&r.requestState==='queued')||(r._fromBindingId===candidate.bindingId&&r._responseState==='queued')))return{};
+      if(!active(w)||workExpired(w,this.clock())||!((r._toBindingId===candidate.bindingId&&r.requestState==='queued')||(r._fromBindingId===candidate.bindingId&&r._responseState==='queued')))return{};
       r._routingBlockedReason=reason;r._routingBlockedAt=ctx.now;await this.saveRequest(ctx,r);return{};
     },{gate:false});
   }
@@ -522,7 +534,7 @@ export class WorkCoordinator {
   async drainNative(roomId){
     // Each pass consumes only a newly queued item; failed/uncertain writes are never retried.
     while(!this.closed){
-      const candidate=await this.broker.store.read(async sql=>{const w=await this.current(sql,roomId);if(!w||!active(w)||Date.parse(w.expiresAt)<=this.clock()||w.wakeBudget.remaining<=0)return null;const p=w.participants.find(p=>p.agent==='codex');const row=await sql.get("SELECT * FROM work_requests WHERE work_id=? AND ((to_binding_id=? AND state='queued') OR (json_extract(data_json,'$._fromBindingId')=? AND json_extract(data_json,'$._responseState')='queued')) ORDER BY request_number LIMIT 1",[w.id,p.bindingId,p.bindingId]);return row?{workId:w.id,requestId:row.id,bindingId:p.bindingId,nativeSessionId:p.nativeSessionId}:null;});
+      const candidate=await this.broker.store.read(async sql=>{const w=await this.current(sql,roomId);if(!w||!active(w)||workExpired(w,this.clock())||budgetExhausted(w.wakeBudget))return null;const p=w.participants.find(p=>p.agent==='codex');const row=await sql.get("SELECT * FROM work_requests WHERE work_id=? AND ((to_binding_id=? AND state='queued') OR (json_extract(data_json,'$._fromBindingId')=? AND json_extract(data_json,'$._responseState')='queued')) ORDER BY request_number LIMIT 1",[w.id,p.bindingId,p.bindingId]);return row?{workId:w.id,requestId:row.id,bindingId:p.bindingId,nativeSessionId:p.nativeSessionId}:null;});
       if(!candidate)return;
       if(this.codexReceiveModeProvider){
         let mode='unverified';
@@ -545,7 +557,7 @@ export class WorkCoordinator {
       }
       if(this.closed)return;
       const claimed=await this.broker.mutate(`work.nativeClaim:${candidate.requestId}`,roomId,{operationId:uid('op')},async ctx=>{
-        const w=await this.load(ctx.sql,roomId,candidate.workId);await this.requireActive(ctx,w,candidate.bindingId);if(w.wakeBudget.remaining<=0)return{delivery:null};
+        const w=await this.load(ctx.sql,roomId,candidate.workId);await this.requireActive(ctx,w,candidate.bindingId);if(budgetExhausted(w.wakeBudget))return{delivery:null};
         const r=await this.request(ctx.sql,w,candidate.requestId),p=this.participant(w,candidate.bindingId),isResponse=r._fromBindingId===p.bindingId;
         if((isResponse?r._responseState:r.requestState)!=='queued')return{delivery:null};
         let payload;
@@ -559,12 +571,12 @@ export class WorkCoordinator {
         r._routingBlockedReason=null;r._routingBlockedAt=null;
         const claimId=uid('claim');if(isResponse){r._responseState='claimed';r._responseClaimId=claimId;r._responseNativeAttempt=true;}else{r.requestState='claimed';r._claimId=claimId;r._nativeAttempt=true;r.waitDisposition='waiting';r.waitingSince??=ctx.now;}
         w.wakeBudget.used++;await this.saveRequest(ctx,r);await this.saveWork(ctx,w);
-        return{delivery:{id:isResponse?r.finalReplyId:r.requestId,roomId,workId:w.id,requestId:r.requestId,claimId,kind:isResponse?'response':'request',requestNumber:r.requestNumber,reviewRef:r._reviewRef??null,bindingId:p.bindingId,nativeSessionId:p.nativeSessionId,segmentId:w.segmentId,origin:isResponse?r.recipient:r.author,expiresAt:w.expiresAt,mode:'work',authorizedScope:await workAuthorization(ctx.sql,roomId,w.id),...payload}};
+        return{delivery:{id:isResponse?r.finalReplyId:r.requestId,roomId,workId:w.id,requestId:r.requestId,claimId,kind:isResponse?'response':'request',requestNumber:r.requestNumber,reviewRef:r._reviewRef??null,bindingId:p.bindingId,nativeSessionId:p.nativeSessionId,segmentId:w.segmentId,origin:isResponse?r.recipient:r.author,expiresAt:w.expiresAt,...(w.unlimited?{unlimited:true}:{}),mode:'work',authorizedScope:await workAuthorization(ctx.sql,roomId,w.id),...payload}};
       },{gate:false});
       if(!claimed.delivery)continue;const d=claimed.delivery;
       let sent,timer,wrote=false;const abort=new AbortController();this.nativeAborts.add(abort);
       try { sent=await Promise.race([
-        this.transport.sendWork(d,{signal:abort.signal,beforeSend:()=>{if(wrote)reject('DUPLICATE_WRITE_BLOCKED');if(!canPush(this.receiveModes.codex))reject('NATIVE_CAPABILITY_CHANGED');if(abort.signal.aborted||this.closed||!this.broker.isWriteAllowed(roomId,d.bindingId,d.segmentId)||Date.parse(d.expiresAt)<=this.clock())reject('ROOM_STOPPED');wrote=true;}}),
+        this.transport.sendWork(d,{signal:abort.signal,beforeSend:()=>{if(wrote)reject('DUPLICATE_WRITE_BLOCKED');if(!canPush(this.receiveModes.codex))reject('NATIVE_CAPABILITY_CHANGED');if(abort.signal.aborted||this.closed||!this.broker.isWriteAllowed(roomId,d.bindingId,d.segmentId)||workExpired(d,this.clock()))reject('ROOM_STOPPED');wrote=true;}}),
         new Promise(resolve=>{timer=setTimeout(()=>{abort.abort();resolve({status:'uncertain',reason:'TIMEOUT'});},15000);})
       ]); }
       catch { sent={status:'uncertain'}; }

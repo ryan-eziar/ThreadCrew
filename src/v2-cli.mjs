@@ -1,3 +1,4 @@
+import { workUnexpired } from './work-limits.mjs';
 import http from 'node:http';
 import fs from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
@@ -343,7 +344,7 @@ export async function runV2Cli(args, { stdout = text => process.stdout.write(tex
     commitOperation(runtime,bindingId,body.operationId);return print(result);
   }
   const workId = validId(flags.work, '--work');
-  if(command==='work-status'){const result=await call(`work/${encodeURIComponent(workId)}/status`);if(result.workId!==workId)throw error('INVALID_RESPONSE','Work status belongs to another task.');return print(result);}
+  if(command==='work-status'){const result=await call(`work/${encodeURIComponent(workId)}/status`);if(result.workId!==workId)throw error('INVALID_RESPONSE','Work status belongs to another task.');if(result.communication?.peerRequestArgs)result.communication.peerRequestArgs=['node',join(projectDir,'chat.mjs'),...result.communication.peerRequestArgs,'--runtime-dir',runtime];return print(result);}
   const workRoute = `work/${encodeURIComponent(workId)}/${WORK_PATHS[command]}`;
   const opKey = `${command}:${workId}${flags.request ? `:${validId(flags.request, '--request')}` : ''}${flags.delivery ? `:${validId(flags.delivery, '--delivery')}` : ''}`;
   const body = operation(runtime, bindingId, opKey, flags.op, current => {
@@ -372,5 +373,19 @@ export async function runV2Cli(args, { stdout = text => process.stdout.write(tex
   if (['work-received', 'work-response'].includes(command) && result.requestId !== undefined && result.requestId !== body.requestId)
     throw error('INVALID_RESPONSE', 'Work result belongs to another request.');
   commitOperation(runtime, bindingId, body.operationId);
+  if(result.communication?.peerRequestArgs)result.communication.peerRequestArgs=['node',join(projectDir,'chat.mjs'),...result.communication.peerRequestArgs,'--runtime-dir',runtime];
+  if (role === 'claude' && ['work-accept', 'work-received', 'work-response'].includes(command)
+      && ['active', 'paused_budget'].includes(result.work?.coordinationState)
+      && workUnexpired(result.work, Date.now())) {
+    const pending = withState(runtime,bindingId,current=>({value:current.pendingWait??null}));
+    result.reception = pending ? {
+      action:'preserve_pending_wait',
+      instruction:'Keep the one original background wait and its saved request/scope. Do not start a second wait or replace an unresolved wait.'
+    } : {
+      action:'rearm_before_work',
+      instruction:'In this same native Claude session, start one background combined wait now, before continuing analysis or implementation. Use tool timeout 7200000 ms. Do not wait until the peer review or work response is finished.',
+      args:['node',join(projectDir,'chat.mjs'),'wait','--room',roomId,'--as',role,'--binding',bindingId,'--scope','all','--work',workId,'--runtime-dir',runtime]
+    };
+  }
   return print(result);
 }

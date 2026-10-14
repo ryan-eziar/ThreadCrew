@@ -94,6 +94,24 @@ test('construction is passive and probe reads only the explicit native target', 
   assert.ok(f.sockets.every((socket) => socket.destroyed));
 });
 
+test('default native probe accepts a slow valid Desktop identity response without sending a message', async () => {
+  const requests = [], sockets = [];
+  const adapter = createCodexTransport({ projectDir, runtimeDir,
+    env: { CODEX_APP_TOOLS_PIPE_PATH: PIPE_A }, discoverOwnerPipes: async () => [],
+    connect() {
+      const socket = new FakeSocket((request, connection) => {
+        setTimeout(() => connection.reply(request, { thread: { id: TARGET, kind: 'codex' } }), 1200);
+      }, requests);
+      sockets.push(socket); return socket;
+    },
+  });
+  assert.deepEqual(await adapter.probe({ nativeSessionId: TARGET }), { available: true });
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].params.tool, 'read_thread');
+  assert.equal(requests[0].params.arguments.threadId, TARGET);
+  assert.ok(sockets.every(socket => socket.destroyed));
+});
+
 test('v2 work inbox uses exact scoped receipt and response helpers, preserving a single native attempt', async () => {
   const f = setup();
   const d = delivery('request-synthetic-work', { roomId: 'room-one', workId: 'work-one', requestId: 'request-one', claimId: 'claim-one', kind: 'request', requestNumber: 1, origin: 'claude', text: 'Review only the authorized change', expiresAt: '2026-09-29T00:00:00.000Z' });
@@ -133,7 +151,22 @@ test('delivery mode preserves discussion-first boundaries and exact compact work
   const workPrompt=w.requests.find(r=>r.params.tool==='send_message_to_thread').params.arguments.prompt;
   const workData=JSON.parse(workPrompt.split('BEGIN DELIVERY JSON\n\n')[1].split('\n\nEND DELIVERY JSON')[0]);
   assert.deepEqual(workData.authorizedScope,scope);
+  assert.match(workPrompt,/Follow the returned communication.peerRequestArgs/);
+  assert.match(workPrompt,/work-state and work-progress are display-only/);
+  assert.doesNotMatch(workPrompt,/Use the work state\/progress\/inbox helpers/);
   assert.equal((await w.adapter.send(delivery('bad-scope',{workId:scope.workId,authorizedScope:{...scope,workId:'different'}}),{beforeSend(){assert.fail('must not send mismatched scope');}})).status,'failed');
+});
+
+test('native unlimited kickoff preserves explicit authority and rejects a missing or contradictory deadline',async()=>{
+  const scope={workId:'unlimited-work',sourceHumanMessageId:'source-human',objective:'Synthetic long task',unlimited:true,expiresAt:null,textSha256:'a'.repeat(64),attachmentIds:[]};
+  const f=setup();
+  assert.equal((await f.adapter.send(delivery('unlimited-kickoff',{roomId:'room-one',workId:scope.workId,authorizedScope:scope}),{beforeSend(){}})).status,'sent');
+  const prompt=f.requests.find(r=>r.params.tool==='send_message_to_thread').params.arguments.prompt;
+  const data=JSON.parse(prompt.split('BEGIN DELIVERY JSON\n\n')[1].split('\n\nEND DELIVERY JSON')[0]);
+  assert.deepEqual(data.authorizedScope,scope);
+  for(const fields of [{unlimited:false},{unlimited:'true'},{expiresAt:'2026-10-14T10:00:00.000Z'}]) {
+    assert.equal((await f.adapter.send(delivery(`invalid-unlimited-${Object.keys(fields)[0]}-${String(fields.unlimited)}`,{workId:scope.workId,authorizedScope:{...scope,...fields}}),{beforeSend(){assert.fail('Invalid authority must not reach a native session');}})).status,'failed');
+  }
 });
 
 test('send calls the gate at the only mutation write and requires exact confirmation', async () => {
@@ -265,6 +298,29 @@ test('timeout or socket loss after mutation is uncertain and never retried or re
     assert.equal(f.discoveryCalls(), 0);
     assert.ok(f.sockets.every((socket) => socket.destroyed));
   }
+});
+
+test('an exact Desktop inactive-window rejection before submission is a failed delivery', async () => {
+  for (const text of ['App-server task is not ready: inactive-window',JSON.stringify({detail:'App-server task is not ready: inactive-window'})]) {
+  const f = setup({ handler(request, socket) {
+    if (request.params.tool === 'read_thread') socket.reply(request, { thread: { id: TARGET, kind: 'codex' } });
+    else queueMicrotask(() => socket.emit('data', frame({ jsonrpc: '2.0', id: request.id,
+      result: { success: false, contentItems: [{ type: 'inputText', text }] } })));
+  } });
+  const send = () => f.adapter.send(delivery(), { beforeSend() {} });
+  assert.deepEqual(await send(), { status: 'failed', reason: 'NATIVE_UNAVAILABLE' });
+  assert.deepEqual(await send(), { status: 'failed', reason: 'NATIVE_UNAVAILABLE' });
+  assert.equal(f.requests.filter(r => r.params.tool === 'send_message_to_thread').length, 1);
+  }
+});
+
+test('other explicit native errors retain uncertainty after submission', async () => {
+  const f = setup({ handler(request, socket) {
+    if (request.params.tool === 'read_thread') socket.reply(request, { thread: { id: TARGET, kind: 'codex' } });
+    else queueMicrotask(() => socket.emit('data', frame({ jsonrpc: '2.0', id: request.id,
+      result: { success: false, contentItems: [{ type: 'inputText', text: 'The app window closed after submission' }] } })));
+  } });
+  assert.deepEqual(await f.adapter.send(delivery(), { beforeSend() {} }), { status: 'uncertain', reason: 'NATIVE_DELIVERY_UNCONFIRMED' });
 });
 
 test('Stop after mutation does not claim native cancellation', async () => {

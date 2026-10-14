@@ -1,6 +1,6 @@
 {
   "product": "ThreadCrew",
-  "generatedAt": "2026-10-03T04:38:09.072Z",
+  "generatedAt": "2026-10-14T00:10:17.832Z",
   "files": [
     {
       "path": "chat.mjs",
@@ -10,7 +10,7 @@
     {
       "path": "package.json",
       "bytes": 499,
-      "sha256": "7a3def5df0d252f27ee93e44284c84bef35958326e613de0d214d35cca90808a"
+      "sha256": "61b139b6b78f215b9eb733d39d0d3fe9f3b2b880ded4a5c5798d2f0e85a46cda"
     },
     {
       "path": "LICENSE",
@@ -44,8 +44,8 @@
     },
     {
       "path": "scripts/open-agent-chat.ps1",
-      "bytes": 5646,
-      "sha256": "1daae0c40b775cba6e990eb6fcd5b0e3eb6f44d8d5877292a922f3ede985104a"
+      "bytes": 6932,
+      "sha256": "f118d4755fd466f61ea0dcd0ed79e58dbadc63d7a19a9fa20bd62228606e18aa"
     },
     {
       "path": "scripts/install-shortcut.ps1",
@@ -69,18 +69,18 @@
     },
     {
       "path": "scripts/export-public.mjs",
-      "bytes": 7744,
-      "sha256": "0b4b9ddd3ebc635ca3cd606e1a975119516d620abfea04f37e24297289a00f55"
+      "bytes": 7782,
+      "sha256": "ab5f6b72e2b41205216456f50bdbdeda6029d89f514735d463dbbdca152a7f5d"
     },
     {
       "path": "docs/AGENT_PROTOCOL.md",
-      "bytes": 13205,
-      "sha256": "71ceb57bd2916d05ce763ec7cf511b4678a9f8b6a516324bc2da9499ed30b456"
+      "bytes": 14713,
+      "sha256": "0a8dd2304e36dcdf80da70d0d6d5ded5d176f2b565503bc9a1c86851285b9670"
     },
     {
       "path": "docs/V2_HELPER_USAGE.md",
-      "bytes": 14664,
-      "sha256": "78aa37f3d16bbf23ad5a7694942915851f5827a73a12afb00a3e16977215b420"
+      "bytes": 15802,
+      "sha256": "36e8a6ca9704ab5709975f2b5fce2c31d3e87c8ab98b3f005479ccb845e3915d"
     },
     {
       "path": "docs/THIRD_PARTY_SOURCES.md",
@@ -96,6 +96,11 @@
       "path": "docs/WAIT_AND_WORK_TIME_CONTRACT_033.md",
       "bytes": 4564,
       "sha256": "78ad405b70c8d9051905f7f6e196eb092650903068caeadb96fced4bdbf28aff"
+    },
+    {
+      "path": "docs/UNLIMITED_WORK_CONTRACT_035.md",
+      "bytes": 2865,
+      "sha256": "fa2801ea4369014bf237e0368b26eee15f558eee1377930152d6aedd2ee5c04a"
     },
     {
       "path": "docs/media/threadcrew-poster.png",
@@ -139,13 +144,13 @@
     },
     {
       "path": "src/codex-transport.mjs",
-      "bytes": 31111,
-      "sha256": "b84c77d9326b02fedf2dab1fb5942646ce88feec2b695b6e2839f240cefa5b4c"
+      "bytes": 32683,
+      "sha256": "6a60f3b3c251f355716896a6f3fd078c7e026753f046227c26314bfbbaf13f89"
     },
     {
       "path": "src/delivery-authority.mjs",
-      "bytes": 1211,
-      "sha256": "638171278b58d3b8c2bf5f7015fdb562906edee1c185518db405fa6c1e72a682"
+      "bytes": 1387,
+      "sha256": "3f1d3b3c72ccd057365fffdfd7a5fc3e0d47a33e4b048446b74510dcec1693b6"
     },
     {
       "path": "src/delivery-controller.mjs",
@@ -194,13 +199,13 @@
     },
     {
       "path": "src/v2-broker.mjs",
-      "bytes": 134352,
-      "sha256": "f6a087a143ad628a4c00546d97576cc7643d63d04e0abf3ced56d216e2f04e90"
+      "bytes": 134373,
+      "sha256": "54b78feb4b93ff201ec32b3a2f545744827ffb04ed02f0c735b71d4aa8e7235c"
     },
     {
       "path": "src/v2-cli.mjs",
-      "bytes": 30266,
-      "sha256": "00f67f5af31f03738b11f1b0be0d4b4b26d6ca28b5643744400325ac166a9843"
+      "bytes": 31667,
+      "sha256": "af1ad152da5aabda09eb594af5f4833ff946a8e9f03b7bd1177566d87adad01d"
     },
     {
       "path": "src/v2-migrate.mjs",
@@ -209,8 +214,8 @@
     },
     {
       "path": "src/v2-server.mjs",
-      "bytes": 34094,
-      "sha256": "fb06b58d5ba28ba30845293b9eb2bec0eb99c8ef24d65abb03c667604300fe23"
+      "bytes": 34236,
+      "sha256": "4e8dbcd44172ceed8cab2e39abe7d5b6ba475e3b4c5cc43a42dc89c2d11e8f76"
     },
     {
       "path": "src/v2-store-worker.mjs",
@@ -224,8 +229,18 @@
     },
     {
       "path": "src/v2-work.mjs",
-      "bytes": 57935,
-      "sha256": "59008ea43ff9382192760cacc589d5cd6bf35f8ad138986c78577bf0bd535d2c"
+      "bytes": 59334,
+      "sha256": "2b26a04f8c0607aa5600fecdeae260d504c4412548252ec08990787b6f8d0baa"
+    },
+    {
+      "path": "src/work-communication.mjs",
+      "bytes": 1331,
+      "sha256": "16676a3ebb6e35c647e968d0f8287747308335d90b1c91cb87435cd6fee84c9b"
+    },
+    {
+      "path": "src/work-limits.mjs",
+      "bytes": 527,
+      "sha256": "782d44e96c208bb1ed0d0e24926cd85b0cc2d67997b7f71a8a628037924578a1"
     },
     {
       "path": "src/work-start-confirmation.mjs",
@@ -244,8 +259,8 @@
     },
     {
       "path": "ui/app-v2.js",
-      "bytes": 284038,
-      "sha256": "45326cd30b168bb3820cf5dfb96fdc645e13003320194480b7aa3c71fdb985e0"
+      "bytes": 285393,
+      "sha256": "fc49c0f690a9c6d8c9a7a411914a811c9fda8df3d82b9eaf0f44d1388f929d95"
     },
     {
       "path": "ui/source-v2.js",
@@ -264,8 +279,8 @@
     },
     {
       "path": "ui/i18n.js",
-      "bytes": 62900,
-      "sha256": "8145e3d33be0be62b40912163f36e940241f365f0dd25d9784c3b97519626a09"
+      "bytes": 63425,
+      "sha256": "c04ee9af03e13eabf2bfc53ad75c992eaa5f40768a94d01aa8bb82733caea780"
     },
     {
       "path": "tests/broker-adversarial.test.mjs",
@@ -299,8 +314,8 @@
     },
     {
       "path": "tests/codex-transport.test.mjs",
-      "bytes": 18846,
-      "sha256": "71ffec832526a4b071b7e2c6a0409a6874855efc7fd142f9f6bec09d9d247ff5"
+      "bytes": 22635,
+      "sha256": "6bbdb514c38d08f02999a5fcfeafffc373d8649e0074a7157291c4272698965c"
     },
     {
       "path": "tests/delivery-controller.test.mjs",
@@ -321,6 +336,11 @@
       "path": "tests/node-runtime.test.mjs",
       "bytes": 1920,
       "sha256": "a3abc9d54292e707f5d507b591676ad0c5b0d52a62bbbe4ad2f9c161effa3ef8"
+    },
+    {
+      "path": "tests/opener.test.mjs",
+      "bytes": 3670,
+      "sha256": "00fbb2345a98bcb429794ca72f0313eb18adf99199b27335ca3b3f0c4427d449"
     },
     {
       "path": "tests/public-export.test.mjs",
@@ -349,8 +369,8 @@
     },
     {
       "path": "tests/v2-cli.test.mjs",
-      "bytes": 17752,
-      "sha256": "8f1c3a09d082ab8bc93a1008dff9f816ee652b0a7f755ba8c3d218bbcbc821e7"
+      "bytes": 21058,
+      "sha256": "7413116b9b22c0392e55b0b0ac51fdcfa938cd27ea01a7d9f2c7911a755e1f1b"
     },
     {
       "path": "tests/v2-join-generation.test.mjs",
@@ -406,6 +426,11 @@
       "path": "tests/work-time-extension.test.mjs",
       "bytes": 6855,
       "sha256": "be08003879d2b16a9c63f08a59c3c52ef488073fa3df3bf3df985be1fc62d569"
+    },
+    {
+      "path": "tests/work-unlimited.test.mjs",
+      "bytes": 12478,
+      "sha256": "413b997174b73ceaf6ceb17dff673958ceb4a31307597e750954cce8f5e1ff38"
     },
     {
       "path": "ui/tests/discuss.test.mjs",
@@ -478,34 +503,39 @@
       "sha256": "b2c98c0770e84f3cabc52efc7536ab06c8386cfee0f6528e1bcd194b9854f166"
     },
     {
+      "path": "ui/tests/work-unlimited.test.mjs",
+      "bytes": 1794,
+      "sha256": "30621541db6e6862f22dc012114f75acca1bbd4f0eb6734d7688534d95acc631"
+    },
+    {
       "path": "README.md",
-      "bytes": 10960,
-      "sha256": "e8000350c8d416172098286c0b97a62526218008d1352328b369f4ed39d80cf4"
+      "bytes": 11311,
+      "sha256": "8b92fad3e7fa94a50a5085b98e0a8a0e340efbcb8a54788ed010975ae3493bad"
     },
     {
       "path": "docs/public/README.md",
-      "bytes": 10960,
-      "sha256": "e8000350c8d416172098286c0b97a62526218008d1352328b369f4ed39d80cf4"
+      "bytes": 11311,
+      "sha256": "8b92fad3e7fa94a50a5085b98e0a8a0e340efbcb8a54788ed010975ae3493bad"
     },
     {
       "path": "README.zh-CN.md",
-      "bytes": 10572,
-      "sha256": "403e3994743bb32f4deeae137564ac2441137a47a9f57df77427da059f902334"
+      "bytes": 10875,
+      "sha256": "de648e5a7b685c1c6f12968daf347db34d199f966d4e255426f7617f860dc077"
     },
     {
       "path": "docs/public/README.zh-CN.md",
-      "bytes": 10572,
-      "sha256": "403e3994743bb32f4deeae137564ac2441137a47a9f57df77427da059f902334"
+      "bytes": 10875,
+      "sha256": "de648e5a7b685c1c6f12968daf347db34d199f966d4e255426f7617f860dc077"
     },
     {
       "path": "docs/RELEASE_NOTES.md",
-      "bytes": 18914,
-      "sha256": "dcbcb299e1f73d33e69b491942c1dcf50d8a88156e565241745503c381ff3bca"
+      "bytes": 21283,
+      "sha256": "0cf1f6a926ff3de701b00f4961e53ce7f34920325933e9362e7c00a0bbab935c"
     },
     {
       "path": "docs/public/RELEASE_NOTES.md",
-      "bytes": 18914,
-      "sha256": "dcbcb299e1f73d33e69b491942c1dcf50d8a88156e565241745503c381ff3bca"
+      "bytes": 21283,
+      "sha256": "0cf1f6a926ff3de701b00f4961e53ce7f34920325933e9362e7c00a0bbab935c"
     },
     {
       "path": "docs/USER_GUIDE.md",
@@ -539,7 +569,7 @@
     }
   ],
   "scan": {
-    "textFiles": 101,
+    "textFiles": 107,
     "findings": []
   },
   "limitations": "Pattern scan only; the icon and separately reviewed PNG assets are binary assets, not text-scanned. No runtime or original Git history included."

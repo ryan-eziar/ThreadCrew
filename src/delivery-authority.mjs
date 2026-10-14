@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { WORK_COMMUNICATION_INSTRUCTION } from './work-communication.mjs';
 
 // Derive authority from the immutable human kickoff, never from the latest
 // peer reply or simply from a room having an active work grant.
@@ -10,7 +11,8 @@ export async function workAuthorization(sql, roomId, workId, { includeText = fal
   if (!source) throw Object.assign(new Error('Authorized work source is unavailable'),{code:'WORK_SCOPE_UNAVAILABLE'});
   return {
     workId, sourceHumanMessageId:work.sourceHumanMessageId, objective:work.objective,
-    expiresAt:work.expiresAt, textSha256:createHash('sha256').update(source.text,'utf8').digest('hex'),
+    communicationPolicy:WORK_COMMUNICATION_INSTRUCTION,
+    expiresAt:work.expiresAt, ...(work.unlimited ? {unlimited:true} : {}), textSha256:createHash('sha256').update(source.text,'utf8').digest('hex'),
     attachmentIds:JSON.parse(source.attachment_ids_json),
     ...(includeText ? {text:source.text,...(work._planText?{agreedPlan:{text:work._planText,sha256:work.authority.planSha256,authority:'implementation context only'}}:{})} : {}),
   };

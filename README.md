@@ -10,7 +10,7 @@ can ask each other for work and reviews directly. The agents keep working in the
 already use, with their own tools, projects and permissions. ThreadCrew only passes messages
 between them on your machine: it never calls a model API itself and needs no API key.
 
-> Early release (0.3.4). Made for Windows 10 and 11; verified so far on Windows 11 with Node.js 22 and 24.
+> Early release (0.3.5). Made for Windows 10 and 11; verified so far on Windows 11 with Node.js 22 and 24.
 
 ## What you can do
 
@@ -197,3 +197,10 @@ Claude and Codex contributed as AI coding assistants.
 MIT © 2026 Ryan Zhang. Built together with Claude and Codex.
 
 ThreadCrew is an independent project and is not affiliated with Anthropic or OpenAI.
+
+### Multi-day collaboration
+
+In **Kick off**, select **Unlimited** for no time, request or wake-up count limits.
+The same authorized task remains active until completed or stopped, including
+across broker restarts. No new periodic model calls are added; the existing
+Claude wait-rearm behavior still applies. Existing finite tasks keep their limits.

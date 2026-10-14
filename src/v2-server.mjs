@@ -1,3 +1,4 @@
+import { workExpired } from './work-limits.mjs';
 import http from 'node:http';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, realpath, stat, unlink } from 'node:fs/promises';
@@ -281,7 +282,7 @@ export async function createV2Server({ broker, work = null, runtimeDir, projectD
           return response(res, await broker[abandon ? 'abandonDelivery' : 'resendDelivery'](roomId, identifier(endpoint[1]), await humanPost(keys, keys.filter(k => k !== 'acknowledgePossibleDuplicate'))));
         }
         if (work && endpoint[0] === 'work') {
-          if (endpoint.length === 1) return response(res, await work.start(roomId, await humanPost(['operationId', 'expectedGate', 'expectedBindings', 'text', 'attachmentIds', 'objective', 'requestLimit', 'wakeLimit', 'durationSeconds'])));
+          if (endpoint.length === 1) return response(res, await work.start(roomId, await humanPost(['operationId', 'expectedGate', 'expectedBindings', 'text', 'attachmentIds', 'objective', 'requestLimit', 'wakeLimit', 'durationSeconds', 'unlimited'], ['operationId', 'expectedGate', 'expectedBindings', 'text', 'attachmentIds', 'objective'])));
           const workId = identifier(endpoint[1]);
           if (endpoint.length === 3 && endpoint[2] === 'budget') return response(res, await work.budget(roomId, workId, await humanPost(['operationId', 'expectedGate', 'expectedWorkVersion', 'addRequests', 'addWakes', 'addSeconds'], ['operationId', 'expectedGate', 'expectedWorkVersion'])));
           if (endpoint.length === 3 && endpoint[2] === 'release') return response(res, await work.release(roomId, workId, await humanPost(['operationId', 'expectedGate', 'expectedWorkVersion', 'acknowledgePossibleRunning'])));
@@ -371,7 +372,7 @@ export async function createV2Server({ broker, work = null, runtimeDir, projectD
           const result = await work.agent(method, roomId, workId, b.bindingId, body);
           // A checkpoint can reserve claims before a concurrent Stop; recheck at the actual body write.
           const leaseExpired=method==='checkpoint'&&b.agent==='claude'&&Date.parse(result.work.participants.find(p=>p.bindingId===b.bindingId)?.leaseDeadlineAt)<=work.clock();
-          if (method === 'checkpoint' && result.items?.length && (leaseExpired||!broker.isWriteAllowed(roomId, b.bindingId, result.work.segmentId) || Date.parse(result.work.expiresAt) <= work.clock())) {
+          if (method === 'checkpoint' && result.items?.length && (leaseExpired||!broker.isWriteAllowed(roomId, b.bindingId, result.work.segmentId) || workExpired(result.work, work.clock()))) {
             await work.checkpointWithheld(roomId,workId,b.bindingId,result);
             const code=leaseExpired?'WAIT_EXPIRED':'ROOM_STOPPED';
             throw Object.assign(new Error(code),{code,status:409,outcome:'unknown'});
