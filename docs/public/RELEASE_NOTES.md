@@ -2,6 +2,23 @@
 
 中文说明在每个版本的英文部分之后。
 
+## 0.3.6
+
+- **Codex Desktop update compatibility.** Recognize the renamed `codex-app-tools-*`
+  endpoint when joining or reconnecting an existing conversation. Background
+  discovery and connections inherited from Codex both support the new name;
+  older `codex-browser-use-*` installations remain supported.
+- Windows owner verification, exact conversation identity, Stop, duplicate-send
+  protection and uncertain-delivery handling remain in place. No new model calls.
+- Upgrade in **Settings → Updates**. Reload the window after the service restarts;
+  use Reconnect if an existing seat still shows disconnected.
+
+**中文：** 修复 Codex Desktop 更新后无法加入群聊的问题。
+
+- 同时识别新版工具连接名称和旧版名称，支持会话内连接及后台自动发现。
+- 保留原进程与原会话校验、Stop、消息去重和发送结果不确定时的保护。
+- 在 **设置 → 更新** 升级，服务重启后刷新窗口；已有席位仍显示断连时点“重新连接”。
+
 ## 0.3.5
 
 - **Peer messages on the first Kick off.** Both agents receive direct-message

@@ -35,7 +35,9 @@ const MAX_OUTBOUND_FRAME_BYTES = 128 * 1024;
 const MAX_INBOUND_FRAME_BYTES = 2 * 1024 * 1024;
 const MAX_OWNER_PIPES = 32;
 const ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/;
-const PIPE = /^\\\\\.\\pipe\\codex-browser-use-[A-Za-z0-9-]+$/;
+// Desktop renamed its tools endpoint in October 2026. Keep both installed
+// generations, with the same local-only grammar for inherited and owner pipes.
+const PIPE = /^\\\\\.\\pipe\\codex-(?:app-tools|browser-use)-[A-Za-z0-9-]+$/;
 const SAFE_REASONS = new Set(['INVALID_INPUT', 'INVALID_ATTACHMENTS', 'WRITE_GUARD_REQUIRED', 'WRITE_GUARD_REJECTED', 'ASYNC_WRITE_GUARD', 'CANCELLED', 'TIMEOUT', 'FRAME_TOO_LARGE', 'NATIVE_UNAVAILABLE', 'DISCOVERY_UNAVAILABLE', 'NATIVE_PIPE_ERROR', 'NATIVE_PIPE_CLOSED', 'NATIVE_BAD_RESPONSE', 'NATIVE_REJECTED', 'TARGET_MISMATCH']);
 const safeReason = (error) => SAFE_REASONS.has(error?.code) ? error.code : 'NATIVE_UNAVAILABLE';
 
@@ -58,7 +60,7 @@ public static class AgentChatNativePipeOwner {
   public static extern bool GetNamedPipeServerProcessId(SafePipeHandle pipe, out uint serverProcessId);
 }
 '@
-$taskPipes = @([System.IO.Directory]::GetFiles('\\.\pipe\') | Where-Object { $_ -match '^\\\\\.\\pipe\\codex-browser-use-[a-zA-Z0-9-]+$' } | Sort-Object | Select-Object -First 33)
+$taskPipes = @([System.IO.Directory]::GetFiles('\\.\pipe\') | Where-Object { $_ -match '${PIPE.source}' } | Sort-Object | Select-Object -First 33)
 if ($taskPipes.Count -gt 32) { throw 'Pipe discovery limit exceeded.' }
 $taskMatches = @()
 foreach ($taskPipePath in $taskPipes) {

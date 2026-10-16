@@ -6,6 +6,7 @@ import { createCodexTransport } from '../src/codex-transport.mjs';
 
 const PIPE_A = '\\\\.\\pipe\\codex-browser-use-synthetic-a';
 const PIPE_B = '\\\\.\\pipe\\codex-browser-use-synthetic-b';
+const TOOLS_PIPE = '\\\\.\\pipe\\codex-app-tools-synthetic-current';
 const TARGET = 'synthetic-codex-target';
 const projectDir = path.resolve('work', 'synthetic adapter project');
 const runtimeDir = path.join(projectDir, 'runtime');
@@ -110,6 +111,47 @@ test('default native probe accepts a slow valid Desktop identity response withou
   assert.equal(requests[0].params.tool, 'read_thread');
   assert.equal(requests[0].params.arguments.threadId, TARGET);
   assert.ok(sockets.every(socket => socket.destroyed));
+});
+
+test('renamed Desktop app-tools endpoint verifies the original target before one guarded send', async () => {
+  const f = setup({ env: { CODEX_APP_TOOLS_PIPE_PATH: TOOLS_PIPE } });
+  let gates = 0;
+  assert.deepEqual(await f.adapter.probe({ nativeSessionId: TARGET }), { available: true });
+  assert.deepEqual(await f.adapter.send(delivery('renamed-pipe'), { beforeSend() { gates++; } }), { status: 'sent' });
+  assert.deepEqual(await f.adapter.send(delivery('renamed-pipe'), { beforeSend() { assert.fail('Do not resend'); } }), { status: 'sent' });
+  assert.equal(gates, 1);
+  assert.equal(f.discoveryCalls(), 0);
+  assert.ok(f.paths.every(value => value === TOOLS_PIPE));
+  assert.deepEqual(f.requests.map(request => request.params.tool), ['read_thread', 'read_thread', 'send_message_to_thread']);
+  assert.ok(f.requests.every(request => request.params.arguments.threadId === TARGET));
+  assert.ok(f.sockets.every(socket => socket.destroyed));
+});
+
+test('owner discovery finds app-tools after an obsolete inherited endpoint without sending during probe', async () => {
+  const f = setup({ discovery: async () => [TOOLS_PIPE], handler(request, socket, pipePath) {
+    socket.reply(request, { thread: { id: pipePath === TOOLS_PIPE ? TARGET : 'obsolete-target', kind: 'codex' } });
+  } });
+  assert.deepEqual(await f.adapter.probe({ nativeSessionId: TARGET }), { available: true });
+  assert.equal(f.discoveryCalls(), 1);
+  assert.deepEqual(f.paths, [PIPE_A, TOOLS_PIPE]);
+  assert.ok(f.requests.every(request => request.params.tool === 'read_thread'));
+  assert.ok(f.sockets.every(socket => socket.destroyed));
+});
+
+test('renamed endpoints still reject remote, malformed and wrong-session candidates before sending', async () => {
+  for (const pipePath of ['\\\\remote\\pipe\\codex-app-tools-x', `${TOOLS_PIPE}\\extra`, `${TOOLS_PIPE}/extra`, '\\\\.\\pipe\\codex-other-x']) {
+    const f = setup({ env: { CODEX_APP_TOOLS_PIPE_PATH: pipePath } });
+    assert.deepEqual(await f.adapter.probe({ nativeSessionId: TARGET }), { available: false });
+    assert.equal(f.paths.length, 0);
+    const discovered = setup({ env: {}, discovery: async () => [pipePath] });
+    assert.deepEqual(await discovered.adapter.probe({ nativeSessionId: TARGET }), { available: false });
+    assert.equal(discovered.paths.length, 0);
+  }
+  const wrong = setup({ env: { CODEX_APP_TOOLS_PIPE_PATH: TOOLS_PIPE }, handler(request, socket) {
+    socket.reply(request, { thread: { id: 'different-session', kind: 'codex' } });
+  } });
+  assert.equal((await wrong.adapter.send(delivery(), { beforeSend() { assert.fail('Wrong session cannot send'); } })).status, 'failed');
+  assert.ok(wrong.requests.every(request => request.params.tool === 'read_thread'));
 });
 
 test('v2 work inbox uses exact scoped receipt and response helpers, preserving a single native attempt', async () => {
