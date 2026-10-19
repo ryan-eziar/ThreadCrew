@@ -6,6 +6,7 @@ import { workAuthorization } from './delivery-authority.mjs';
 import { confirmStart, pendingKickoff, startContext } from './work-start-confirmation.mjs';
 import { UNLIMITED_WORK_DB_EXPIRY, workExpired, workUnexpired, budgetExhausted } from './work-limits.mjs';
 import { workCommunication } from './work-communication.mjs';
+import { receptionDeadline } from './reception-period.mjs';
 
 const agents = ['codex', 'claude'];
 const receiveModes = new Set(['unverified', 'next_step', 'next_turn', 'unavailable']);
@@ -94,6 +95,18 @@ export class WorkCoordinator {
       if (!b || !b.current || b.native_session_id !== p.nativeSessionId) reject('BINDING_CHANGED');
       if (bindingId === p.bindingId && p.agent === 'claude' && Date.parse(b.deadline_at) <= this.clock()) reject('WAIT_EXPIRED');
     }
+  }
+  // A work request or response from Claude counts like an ordinary reply: its receiving period starts
+  // again from now, so a long work session never cuts Claude off while the two are still talking. An
+  // expired period stays expired (only the person's reconnect renews it), and receipts, checkpoints,
+  // progress and state never renew it.
+  async renewReception(ctx, p, bindingId, byId) {
+    if (p.agent !== 'claude') return;
+    const b = await ctx.getBinding(bindingId);
+    if (!b || !b.current || !b.deadline_at || Date.parse(b.deadline_at) <= this.clock()) return;
+    const deadline = receptionDeadline(ctx.room, Date.parse(ctx.now));
+    if (Date.parse(deadline) <= Date.parse(b.deadline_at)) return;
+    await ctx.sql.run('UPDATE bindings SET deadline_at=?,last_renewed_by_reply_id=?,expired_notified=0,version=version+1 WHERE id=?', [deadline, byId, bindingId]);
   }
   async saveWork(ctx, w) {
     w.version++;
@@ -333,6 +346,7 @@ export class WorkCoordinator {
         const entry=await this.event(ctx,w,'progress',p.agent,await ctx.createContent(body.text),{references:body.references??[]});w._progress[bindingId]={at:ctx.now,text:body.text};result={timelineItemId:entry.id};
       }else if(method==='requests'){
         if(p.acceptance!=='accepted')reject('WORK_NOT_ACCEPTED');const r=await this.newRequest(ctx,w,p,body);result={requestId:r.requestId,requestVersion:r.requestVersion,requestNumber:r.requestNumber};
+        await this.renewReception(ctx,p,bindingId,r.requestId);
       }else if(method==='checkpoint'){
         p.lastCheckpointAt=ctx.now;p.version++;
         if(body.requestId)id(body.requestId);
@@ -365,6 +379,7 @@ export class WorkCoordinator {
         r._responseContent=await ctx.createContent(body.text,'markdown');
         const e=await this.event(ctx,w,'response',p.agent,r._responseContent,{recipient:r.author,requestId:r.requestId,requestVersion:r.requestVersion+1,requestNumber:r.requestNumber,attachmentIds,lateReason:late,replyTo:{itemId:r._timelineId,requestId:r.requestId,author:r.author,previewText:[...r._text].slice(0,40).join(''),timelineOrder:(await ctx.sql.get('SELECT order_num FROM timeline WHERE id=?',[r._timelineId])).order_num,aroundCursor:await this.around(ctx.sql,w.roomId,r._timelineId)}});
         r._responseTimelineId=e.id;await this.saveRequest(ctx,r);ctx.room.unread_reply_count++;result={replyId:r.finalReplyId,requestId:r.requestId,lateReason:late,duplicate:false};
+        if(r.waitDisposition!=='abandoned')await this.renewReception(ctx,p,bindingId,r.finalReplyId);
       }else if(method==='state'){
         if(!['not_started','working','awaiting_review','blocked','completed','stopped','unknown'].includes(body.workState))reject('INVALID_INPUT',400);
         if(p.acceptance!=='accepted')reject('WORK_NOT_ACCEPTED');

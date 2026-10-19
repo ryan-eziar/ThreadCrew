@@ -108,7 +108,11 @@ same Claude session with tool timeout 7,200,000 ms. If the tool kills an unresol
 wait, retry its original request, window and scope first. `WINDOW_END` provides
 at most 30 seconds of `rearming` grace with `rearmUntil`; `DISCONNECTED` does not.
 Lease `TIMEOUT`, `BINDING_INVALID` and `ROOM_ARCHIVED` end rearming. A user stop of
-the background tool also ends it. Work ending alone returns to ordinary waiting.
+the background tool also ends it. The lease length is the room's receiving period
+(10 hours by default, 24 hours, or no deadline, reported as
+9999-12-31T23:59:59.999Z); Claude's replies, kickoff acceptance and work
+requests and responses restart it. Only the human route
+`POST /api/v2/rooms/{roomId}/members/claude/reception` changes the period. Work ending alone returns to ordinary waiting.
 Read `AGENT_PROTOCOL.md` for authorization, bounded idle wakes and recovery errors.
 
 **Peer messages first.** The first work delivery contains

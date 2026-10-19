@@ -5,6 +5,7 @@ import { V2Store, V2StorageError } from './v2-store.mjs';
 import { createTextAttachment, readTextAttachment, readAttachmentBytes } from './broker-storage.mjs';
 import { roomNotes } from './threadcrew-features.mjs';
 import { workAuthorization } from './delivery-authority.mjs';
+import { RECEPTION_MODES, receptionDeadline, receptionMode, receptionView } from './reception-period.mjs';
 
 export const API_VERSION = 'agent-chat.window.v2';
 const AGENTS = ['codex', 'claude'];
@@ -288,11 +289,12 @@ export class V2Broker extends EventEmitter {
   async #saveRoom(sql, room) {
     await sql.run(`UPDATE rooms SET version=?,name=?,lifecycle=?,archived_at=?,last_activity_at=?,latest_preview=?,
       latest_order=?,read_through_order=?,unread_reply_count=?,pending_count=?,attention_count=?,abandoned_late_count=?,
-      gate_segment_id=?,gate_version=?,stopped_at=?,active_exchange_id=?,health=?,revision=?,join_codex_version=?,join_claude_version=? WHERE id=?`,
+      gate_segment_id=?,gate_version=?,stopped_at=?,active_exchange_id=?,health=?,revision=?,join_codex_version=?,join_claude_version=?,
+      claude_reception=? WHERE id=?`,
       [room.version,room.name,room.lifecycle,room.archived_at,room.last_activity_at,room.latest_preview,
         room.latest_order,room.read_through_order,room.unread_reply_count,room.pending_count,room.attention_count,room.abandoned_late_count,
         room.gate_segment_id,room.gate_version,room.stopped_at,room.active_exchange_id,room.health,room.revision,
-        room.join_codex_version ?? 1,room.join_claude_version ?? 1,room.id]);
+        room.join_codex_version ?? 1,room.join_claude_version ?? 1,receptionMode(room),room.id]);
   }
   #invalidateJoin(room, agent = null) {
     for (const role of agent ? [agent] : AGENTS) {
@@ -551,7 +553,7 @@ export class V2Broker extends EventEmitter {
       if (lateReasons.includes('wait_abandoned')) ctx.room.abandoned_late_count += 1;
     }
     if (binding.agent === 'claude' && binding.current && !lateReasons.includes('wait_abandoned')) {
-      const deadline = new Date(Date.parse(ctx.now) + 36_000_000).toISOString();
+      const deadline = receptionDeadline(ctx.room, Date.parse(ctx.now));
       await ctx.sql.run('UPDATE bindings SET deadline_at=?,last_renewed_by_reply_id=?,expired_notified=0,version=version+1 WHERE id=?', [deadline,replyId,bindingId]);
       binding.deadline_at = deadline;
     }
@@ -591,6 +593,7 @@ export class V2Broker extends EventEmitter {
       canReceiveCollaboration: false, collaborationReceiveMode: 'unverified', collaborationEvidenceAt: null,
       reason, evidenceAt: connection?.at ?? waiter?.armedAt ?? null, blockingDeliveryId: blocker?.id ?? null,
       wait, openWork: { queued: queued.n, possibleRunning: running.n },
+      ...(agent === 'claude' ? { reception: receptionView(room) } : {}),
       removalImpact: binding ? await this.#removalImpact({sql,room},binding.id) : null,
       actions: { remove: allowed(binding ? null : 'NO_BINDING') },
       recoveryHint: binding && blocker ? { helperPath: resolve(this.projectDir,'chat.mjs'), runtimeDir: this.#runtimeDir,
@@ -1353,7 +1356,7 @@ export class V2Broker extends EventEmitter {
         }
         if (current?.native_session_id === input.nativeSessionId) {
           if (input.agent === 'claude' && input.renew && Date.parse(current.deadline_at) <= this.#clock()) {
-            const deadline = new Date(this.#clock()+36_000_000).toISOString();
+            const deadline = receptionDeadline(ctx.room, this.#clock());
             await ctx.sql.run('UPDATE bindings SET lease_id=?,deadline_at=?,expired_notified=0,version=version+1,notification_json=NULL,batch_json=NULL,drain_needs_wait=1 WHERE id=?',
               [nowId('lease'),deadline,current.id]);
             current.deadline_at = deadline;
@@ -1405,7 +1408,7 @@ export class V2Broker extends EventEmitter {
         const binding = {id:nowId('binding'),room_id:roomId,agent:input.agent,native_session_id:input.nativeSessionId,
           version:1,label:input.label || `${input.agent} session`,source:verified?'native_verified':'manual',joined_at:ctx.now,
           left_at:null,leave_reason:null,current:1,lease_id:input.agent==='claude'?nowId('lease'):null,
-          deadline_at:input.agent==='claude'?new Date(this.#clock()+36_000_000).toISOString():null,
+          deadline_at:input.agent==='claude'?receptionDeadline(ctx.room, this.#clock()):null,
           last_renewed_by_reply_id:null,expired_notified:0,notification_json:null,batch_json:null,drain_needs_wait:0};
         await ctx.sql.run(`INSERT INTO bindings(id,room_id,agent,native_session_id,version,label,source,joined_at,left_at,leave_reason,
           current,lease_id,deadline_at,last_renewed_by_reply_id,expired_notified,notification_json,batch_json,drain_needs_wait)
@@ -1524,6 +1527,29 @@ export class V2Broker extends EventEmitter {
         return {gate:{segmentId:ctx.room.gate_segment_id,version:ctx.room.gate_version},effects:{cancelledUnwrittenCount,...possible}};
       });
     } finally { if (!this.#unsafe) this.#blockedBindings.delete(bindingId); }
+  }
+
+  // The person's choice of Claude's receiving period in this room (human route only). A current period
+  // that is still running takes the new length from now; an expired one stays expired, since only a
+  // reconnect renews it. Later renewals (replies, acceptances, work messages, reconnects) use the choice.
+  async setClaudeReception(roomId,input) {
+    fieldSet(input,['operationId','mode']);
+    if (!RECEPTION_MODES.includes(input.mode)) fail('INVALID_INPUT',400);
+    return this.mutate('member.reception',roomId,input,async ctx => {
+      if (ctx.room.lifecycle !== 'open') fail('ROOM_ARCHIVED');
+      const previous = receptionMode(ctx.room);
+      const binding = await ctx.sql.get("SELECT * FROM bindings WHERE room_id=? AND agent='claude' AND current=1",[roomId]);
+      let deadlineAt = binding?.deadline_at ?? null;
+      if (previous !== input.mode) {
+        ctx.room.claude_reception = input.mode;
+        if (binding?.deadline_at && Date.parse(binding.deadline_at) > this.#clock()) {
+          deadlineAt = receptionDeadline(ctx.room, Date.parse(ctx.now));
+          await ctx.sql.run('UPDATE bindings SET deadline_at=?,expired_notified=0,version=version+1 WHERE id=?',[deadlineAt,binding.id]);
+        }
+        await this.#addTimeline(ctx,'system',{systemType:'reception_changed',data:{agent:'claude',mode:input.mode,previous},text:'reception_changed'});
+      }
+      return {reception:receptionView(ctx.room),deadlineAt};
+    },{gate:false});
   }
 
   #eventCursor(scope,roomId,revision) {
@@ -1701,7 +1727,7 @@ export class V2Broker extends EventEmitter {
         if(value.status==='DISCONNECTED'||value.status==='TIMEOUT')this.#connections.set(bindingId,{available:false,at:this.#now()});
         if (value.status === 'WINDOW_END') {
           const connection = { available:true, at:this.#now(), workId, notificationScopes:waiter.notificationScopes,
-            rearmUntil:new Date(Math.min(this.#clock()+30000,Date.parse(binding.deadline_at))).toISOString() };
+            rearmUntil:new Date(Math.min(this.#clock()+30000,Date.parse(value.deadlineAt ?? binding.deadline_at))).toISOString() };
           this.#connections.set(bindingId, connection);
           const grace = setTimeout(() => {
             this.#rearmTimers.delete(bindingId);
@@ -1722,7 +1748,18 @@ export class V2Broker extends EventEmitter {
       this.#waitChanged(roomId,bindingId,{state:'armed',at:waiter.armedAt,workId,notificationScopes:waiter.notificationScopes});
       this.#connectionChanged(roomId);
       const leaseRemaining = Date.parse(binding.deadline_at)-this.#clock();
-      timer = setTimeout(()=>waiter.finish({status:leaseRemaining<=windowMs?'TIMEOUT':'WINDOW_END',deadlineAt:binding.deadline_at}),Math.max(1,Math.min(leaseRemaining,windowMs)));
+      // The period can start again while this wait is armed (a reply or a work message) or change with
+      // the person's setting, so the current deadline decides: a period that moved ends the wait with
+      // WINDOW_END (rearm), never a stale TIMEOUT. An unchanged one keeps the original decision.
+      const finishAtTimer = deadlineAt => {
+        const status = deadlineAt === binding.deadline_at ? (leaseRemaining<=windowMs?'TIMEOUT':'WINDOW_END')
+          : Date.parse(deadlineAt)<=this.#clock() ? 'TIMEOUT' : 'WINDOW_END';
+        waiter.finish({status,deadlineAt});
+      };
+      timer = setTimeout(()=>{
+        this.#store.read(sql=>sql.get('SELECT deadline_at FROM bindings WHERE id=?',[bindingId]))
+          .then(row=>finishAtTimer(row?.deadline_at ?? binding.deadline_at),()=>finishAtTimer(binding.deadline_at));
+      },Math.max(1,Math.min(leaseRemaining,windowMs)));
       timer.unref?.(); signal?.addEventListener('abort',disconnect,{once:true});
       if (signal?.aborted) disconnect();
       this.#kick();

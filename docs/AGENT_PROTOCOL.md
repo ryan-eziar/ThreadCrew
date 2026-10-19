@@ -51,6 +51,17 @@ bounded by the existing reception lease. This is not model polling. A stopped,
 unarchived room still permits waiting and exact-seat reconnect, ready for the
 next new human message. It cannot resume stopped work or forward stopped mail.
 
+The reception lease lasts for the receiving period the person chose for this
+room: 10 hours (the default), 24 hours, or until they stop it. It starts again
+from each committed ordinary reply, kickoff acceptance, work request and work
+response of this Claude seat. Receipts, checkpoints, progress, state, rearming
+and `WINDOW_END` never renew it. Work messages never revive an expired lease; after
+expiry, only your committed reply to a delivery you already claimed, or the person's
+reconnect, starts it again. "Until they stop it" reports `deadlineAt` 9999-12-31T23:59:59.999Z: keep
+rearming at each `WINDOW_END`; it ends when the person changes the period, removes
+the seat or archives the room. A wait whose lease was renewed while it was armed
+ends with `WINDOW_END`, not `TIMEOUT`.
+
 The [official tools reference](https://code.claude.com/docs/en/tools-reference#time-limit-for-background-commands)
 now limits unattended sessions: since Claude Code 2.1.288, local terminal,
 Desktop and VS Code background commands have no background time limit. Earlier

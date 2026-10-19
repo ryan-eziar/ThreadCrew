@@ -1,6 +1,6 @@
 {
   "product": "ThreadCrew",
-  "generatedAt": "2026-10-16T13:15:37.442Z",
+  "generatedAt": "2026-10-19T12:27:41.341Z",
   "files": [
     {
       "path": "chat.mjs",
@@ -10,7 +10,7 @@
     {
       "path": "package.json",
       "bytes": 499,
-      "sha256": "404d1dbeae15b25cab0a9e769fc481a25c8f4429da56ff9d45dc54149fce7059"
+      "sha256": "9f7e5245343bcdc64edb8c1474c517f1705adafe0c557b7fb48c03f277b0070e"
     },
     {
       "path": "LICENSE",
@@ -69,18 +69,18 @@
     },
     {
       "path": "scripts/export-public.mjs",
-      "bytes": 7782,
-      "sha256": "ab5f6b72e2b41205216456f50bdbdeda6029d89f514735d463dbbdca152a7f5d"
+      "bytes": 7822,
+      "sha256": "2fed576aca75bfb9662feda32a04e376c1dd12bab396ad048f6fb4db1059c8fc"
     },
     {
       "path": "docs/AGENT_PROTOCOL.md",
-      "bytes": 14713,
-      "sha256": "0a8dd2304e36dcdf80da70d0d6d5ded5d176f2b565503bc9a1c86851285b9670"
+      "bytes": 15500,
+      "sha256": "ef969f3a5dc83662708f91a2eb98c1c47b30320300952ab70b1a36a4c10918b9"
     },
     {
       "path": "docs/V2_HELPER_USAGE.md",
-      "bytes": 15802,
-      "sha256": "36e8a6ca9704ab5709975f2b5fce2c31d3e87c8ab98b3f005479ccb845e3915d"
+      "bytes": 16114,
+      "sha256": "05e18df9b5e5ae1b4df05c716e492b7993a52a6e03f37143878b575eafd2bb0f"
     },
     {
       "path": "docs/THIRD_PARTY_SOURCES.md",
@@ -101,6 +101,11 @@
       "path": "docs/UNLIMITED_WORK_CONTRACT_035.md",
       "bytes": 2865,
       "sha256": "fa2801ea4369014bf237e0368b26eee15f558eee1377930152d6aedd2ee5c04a"
+    },
+    {
+      "path": "docs/RECEPTION_PERIOD_CONTRACT_037.md",
+      "bytes": 3988,
+      "sha256": "b5cc21cca4951115c3962964811e3d9d585a016a7dbe21e1e14b5d12c95bbf15"
     },
     {
       "path": "docs/media/threadcrew-poster.png",
@@ -168,6 +173,11 @@
       "sha256": "3dee9fdbc58fb9cfae179ede56c32841e74a6b21998397203597e814bbd17e5d"
     },
     {
+      "path": "src/reception-period.mjs",
+      "bytes": 1294,
+      "sha256": "40bf118c34c6c8d9ce62ecaaefc62ebd18aa46820dc155a41875cb53901a259d"
+    },
+    {
       "path": "src/runtime-recovery.mjs",
       "bytes": 10696,
       "sha256": "c4f776ffe53f7ffc1eaf87d0ef8c7fcff048a14228858ada5c0bf17b2fe3271c"
@@ -199,8 +209,8 @@
     },
     {
       "path": "src/v2-broker.mjs",
-      "bytes": 134373,
-      "sha256": "54b78feb4b93ff201ec32b3a2f545744827ffb04ed02f0c735b71d4aa8e7235c"
+      "bytes": 136784,
+      "sha256": "9588db7f7738df25b85e1b483159674c7ee805d5e8a7557c8d4237f446a5c990"
     },
     {
       "path": "src/v2-cli.mjs",
@@ -214,13 +224,13 @@
     },
     {
       "path": "src/v2-server.mjs",
-      "bytes": 34236,
-      "sha256": "4e8dbcd44172ceed8cab2e39abe7d5b6ba475e3b4c5cc43a42dc89c2d11e8f76"
+      "bytes": 34464,
+      "sha256": "81334b408b7043cc987200d50952b10259d7b8d0516227a7e033d52a7c06c722"
     },
     {
       "path": "src/v2-store-worker.mjs",
-      "bytes": 10916,
-      "sha256": "36c521c29ffeb13775ec45622b58351da20b86f1ae0b0a1a0735ce0e8a9e1f0d"
+      "bytes": 11208,
+      "sha256": "b17b84e22ad0a5f7d9edded64088d142d2b7e46c42282aa25c558081d8d564be"
     },
     {
       "path": "src/v2-store.mjs",
@@ -229,8 +239,8 @@
     },
     {
       "path": "src/v2-work.mjs",
-      "bytes": 59334,
-      "sha256": "2b26a04f8c0607aa5600fecdeae260d504c4412548252ec08990787b6f8d0baa"
+      "bytes": 60445,
+      "sha256": "0dccc44c1b1742d919bf6fff4686988dc6ebfaec15b2ef058200646ae4b73319"
     },
     {
       "path": "src/work-communication.mjs",
@@ -259,8 +269,8 @@
     },
     {
       "path": "ui/app-v2.js",
-      "bytes": 285393,
-      "sha256": "fc49c0f690a9c6d8c9a7a411914a811c9fda8df3d82b9eaf0f44d1388f929d95"
+      "bytes": 287491,
+      "sha256": "14356db7b19c5e43a474a0834c1832d30a5ac85198eb223385e2746ae7ead5ca"
     },
     {
       "path": "ui/source-v2.js",
@@ -269,8 +279,8 @@
     },
     {
       "path": "ui/style.css",
-      "bytes": 72156,
-      "sha256": "6d35cf117017ed668045121ec6a2e34645ccdabc117818171eb692af090d3ff2"
+      "bytes": 72439,
+      "sha256": "2806cd2e5649442be7b52983afbbe242a7ec18134d4d03b96fd7672aba9efe3c"
     },
     {
       "path": "ui/markdown.js",
@@ -279,8 +289,8 @@
     },
     {
       "path": "ui/i18n.js",
-      "bytes": 63425,
-      "sha256": "c04ee9af03e13eabf2bfc53ad75c992eaa5f40768a94d01aa8bb82733caea780"
+      "bytes": 64543,
+      "sha256": "cd77989d20fd9115cded2734bd993fc6a93abb743cb8bb47a92f937b8b1f46c3"
     },
     {
       "path": "tests/broker-adversarial.test.mjs",
@@ -346,6 +356,11 @@
       "path": "tests/public-export.test.mjs",
       "bytes": 3505,
       "sha256": "da4aec60a7f1062e38ba4d3781f7b8508a56903ec407236098b5d9480bcc00a0"
+    },
+    {
+      "path": "tests/reception-period.test.mjs",
+      "bytes": 12098,
+      "sha256": "1921b2adf7d88d9b234a5f441710ba68781a07948f1e70a9ee92978d8054ff20"
     },
     {
       "path": "tests/reconnect.test.mjs",
@@ -473,6 +488,11 @@
       "sha256": "c7547ee1de1839da461da86e9e60d5c31bb303d5527b72b2f89247aab120b3ef"
     },
     {
+      "path": "ui/tests/reception.test.mjs",
+      "bytes": 3900,
+      "sha256": "cce3436e58d0263d8f1c2cebb4acaf7b3310adefb485ab66649fa11266909587"
+    },
+    {
       "path": "ui/tests/reconnect.test.mjs",
       "bytes": 7655,
       "sha256": "e355bb2440e921d7db2259961571a9038861f0bb7a66dc878b58f705253d61b7"
@@ -510,52 +530,52 @@
     {
       "path": "README.md",
       "bytes": 11311,
-      "sha256": "0b64f171c0c3e81e4e7c6869995078cf1a2ff51803d3ee465b30220eb58e1874"
+      "sha256": "2ad957743d33a1528df64806358461803efbc0f380a5dbb8dc860ddc9ea9e75d"
     },
     {
       "path": "docs/public/README.md",
       "bytes": 11311,
-      "sha256": "0b64f171c0c3e81e4e7c6869995078cf1a2ff51803d3ee465b30220eb58e1874"
+      "sha256": "2ad957743d33a1528df64806358461803efbc0f380a5dbb8dc860ddc9ea9e75d"
     },
     {
       "path": "README.zh-CN.md",
       "bytes": 10875,
-      "sha256": "029461160d0b753a6de064b3160f8f0a889979174105200a7806d1fe9533c8c0"
+      "sha256": "d8e995277c41b446c12c5c94fabf4864f839be27e7f1ed17154e33ac0102ce9a"
     },
     {
       "path": "docs/public/README.zh-CN.md",
       "bytes": 10875,
-      "sha256": "029461160d0b753a6de064b3160f8f0a889979174105200a7806d1fe9533c8c0"
+      "sha256": "d8e995277c41b446c12c5c94fabf4864f839be27e7f1ed17154e33ac0102ce9a"
     },
     {
       "path": "docs/RELEASE_NOTES.md",
-      "bytes": 22300,
-      "sha256": "844810a9ab55edbfe77bb818694b15cb4c33c63e77f400d33b5d92931cf68b09"
+      "bytes": 23983,
+      "sha256": "5107d9f6de39ea5dc1f6568e1023b3dfd0a573f5014daac911430235a562f9a1"
     },
     {
       "path": "docs/public/RELEASE_NOTES.md",
-      "bytes": 22300,
-      "sha256": "844810a9ab55edbfe77bb818694b15cb4c33c63e77f400d33b5d92931cf68b09"
+      "bytes": 23983,
+      "sha256": "5107d9f6de39ea5dc1f6568e1023b3dfd0a573f5014daac911430235a562f9a1"
     },
     {
       "path": "docs/USER_GUIDE.md",
-      "bytes": 16315,
-      "sha256": "b3143907638e913aa81d45f3ae68bf9ef13e18ab11e003637b0e1aac32bacff5"
+      "bytes": 17219,
+      "sha256": "f82fbd5e25af6527963136d3f12b8eaead97c6ea2d22c2fa50b5add126195878"
     },
     {
       "path": "docs/public/USER_GUIDE.md",
-      "bytes": 16315,
-      "sha256": "b3143907638e913aa81d45f3ae68bf9ef13e18ab11e003637b0e1aac32bacff5"
+      "bytes": 17219,
+      "sha256": "f82fbd5e25af6527963136d3f12b8eaead97c6ea2d22c2fa50b5add126195878"
     },
     {
       "path": "docs/USER_GUIDE.zh-CN.md",
-      "bytes": 15586,
-      "sha256": "7a5b5846beb941747984eacc0887e407cc0958ec35547fa7c8e7747f2212b3c7"
+      "bytes": 16397,
+      "sha256": "df061d01bd7777696af30518c417a4e04e36135dd5cd853603f2ce311cf377ba"
     },
     {
       "path": "docs/public/USER_GUIDE.zh-CN.md",
-      "bytes": 15586,
-      "sha256": "7a5b5846beb941747984eacc0887e407cc0958ec35547fa7c8e7747f2212b3c7"
+      "bytes": 16397,
+      "sha256": "df061d01bd7777696af30518c417a4e04e36135dd5cd853603f2ce311cf377ba"
     },
     {
       "path": "AGENTS.md",
@@ -569,7 +589,7 @@
     }
   ],
   "scan": {
-    "textFiles": 107,
+    "textFiles": 111,
     "findings": []
   },
   "limitations": "Pattern scan only; the icon and separately reviewed PNG assets are binary assets, not text-scanned. No runtime or original Git history included."

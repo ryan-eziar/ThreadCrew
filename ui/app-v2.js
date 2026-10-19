@@ -27,6 +27,8 @@
   // work session used 10 requests and 18 wake-ups, and wake-ups ran out first.
   const PRESETS = { small: [12, 24, t('小')], standard: [24, 48, t('标准')], large: [48, 96, t('大')], unlimited: [null, null, t('无限')] };
   const BUDGET_STEP = { requests: 12, wakes: 24 }; // one "+" in the header or the work popover
+  // Claude's receiving period choices, as the broker names them (member.reception.options).
+  const RECEPTION_LABEL = { '10h': t('10 小时'), '24h': t('24 小时'), unlimited: t('直到我停止') };
   const TIME_STEPS_H = [1, 2, 5]; // the work popover's "more time" choices; the header "+" adds the first
   // Files the broker accepts, by extension; it checks the type against the name and the content.
   const UPLOAD_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', pdf: 'application/pdf',
@@ -257,7 +259,11 @@
     const claudeArmed = m.route === 'claude-pull' && m.wait && ['armed', 'rearming'].includes(m.wait.state);
     switch (m.state) {
       case 'unbound': return { text: t('未进群'), tone: 'off' };
-      case 'ready': return claudeArmed ? { text: t('待命至 {0}', fmtTime(m.wait.deadlineAt)), short: t('待命'), tone: 'ok' } : { text: t('已连接'), tone: 'ok' };
+      case 'ready':
+        if (!claudeArmed) return { text: t('已连接'), tone: 'ok' };
+        // "Until I stop it" is the broker's year-9999 deadline; decide from the deadline, not the room's choice.
+        return String(m.wait.deadlineAt).startsWith('9999-') ? { text: t('待命（不限时）'), short: t('待命'), tone: 'ok' }
+          : { text: t('待命至 {0}', fmtTime(m.wait.deadlineAt)), short: t('待命'), tone: 'ok' };
       case 'notified': return { text: t('已通知 · 等它来取'), short: t('已通知'), tone: 'busy' };
       case 'busy':
         if ((claudeArmed && !m.workInboxActive) || m.canReceiveCollaboration) return { text: t('工作中 · 收件已接通'), short: t('工作中'), tone: 'busy' };
@@ -3120,6 +3126,7 @@
         return systemLine(t('{0} 进群{1}', NAMES[data.agent] || t('成员'), label), 'info', e.at, e.id);
       }
       case 'member_removed': return systemLine(t('{0} 已移出本群；它的原会话不受影响', NAMES[data.agent] || t('成员')), 'info', e.at, e.id);
+      case 'reception_changed': return systemLine(t('Claude 的接收期限改为「{0}」', RECEPTION_LABEL[data.mode] || data.mode), 'info', e.at, e.id);
       case 'room_archived': return divider(t('本群已归档'), e.id);
       case 'room_restored': return divider(t('本群已恢复 · 席位是空的'), e.id);
       case 'room_renamed': return systemLine(t('群名改为「{0}」', data.name || ''), 'info', e.at, e.id);
@@ -3677,6 +3684,24 @@
   }
   const kvList = (rows) => h('dl', { class: 'kv' }, rows.filter(([, v]) => v !== '' && v != null).map(([k, v]) => [h('dt', null, k), h('dd', null, v)]));
 
+  // Claude's receiving period, chosen per room in its panel: the broker's reception {mode, seconds,
+  // unlimited, options}. The hint says what the choice means, including that "until I stop it" keeps
+  // waking an idle session about every two hours.
+  function receptionHint(m) {
+    const r = m.reception;
+    if (!r) return null;
+    if (m.wait && m.wait.state === 'expired') return t('期限已过：改了之后，还要用重连口令接上一次。');
+    if (r.unlimited) return t('一直收消息，直到你改回来、把它移出或归档本群。群里没动静时，它大约每 2 小时醒一次重新挂上，会一直消耗 Claude 用量。');
+    return t('它最后一次回复后 {0} 小时内都能收到消息，每回复一次就重新计算；超过之后要用重连口令接上。', Math.round(r.seconds / 3600));
+  }
+  function receptionControl(m) {
+    const r = m.reception;
+    return h('div', { class: 'reception' },
+      actionState(rk('reception')) || segmented(t('接收期限'), r.options.map((mode) => [mode, RECEPTION_LABEL[mode] || mode]), r.mode,
+        (mode) => runOp(rk('reception'), roomPath('/members/claude/reception'), { operationId: uuid(), mode })),
+      h('p', { class: 'hint reception-hint' }, receptionHint(m)));
+  }
+
   function renderPanel(c) {
     if (!st.panel || !['member', 'room'].includes(st.panel.kind)) return null;
     if (st.panel.kind === 'member') {
@@ -3689,7 +3714,8 @@
         rows.push([t('进群时间'), fmtTime(m.binding.joinedAt)]);
       }
       const deadlineShown = m.state === 'ready' && m.route === 'claude-pull' && m.wait && ['armed', 'rearming'].includes(m.wait.state);
-      if (m.wait && m.wait.deadlineAt && !deadlineShown) rows.push([t('待命期限'), fmtTime(m.wait.deadlineAt)]);
+      if (m.wait && m.wait.deadlineAt && !deadlineShown) rows.push([t('待命期限'), String(m.wait.deadlineAt).startsWith('9999-') ? t('不限时') : fmtTime(m.wait.deadlineAt)]);
+      if (m.agent === 'claude' && m.reception && c.room.lifecycle === 'open') rows.push([t('接收期限'), receptionControl(m)]);
       if (m.openWork && (m.openWork.queued || m.openWork.possibleRunning)) rows.push([t('手上的事'), t('排队 {0} 条 · 可能在生成 {1} 条', m.openWork.queued, m.openWork.possibleRunning)]);
       const actions = [];
       if (c.room.lifecycle === 'open') {

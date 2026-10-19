@@ -153,6 +153,10 @@ for (const column of ['join_codex_version', 'join_claude_version']) {
     db.exec(`ALTER TABLE rooms ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 1`);
   }
 }
+// 0.3.7: Claude's receiving period per room ('10h', '24h' or 'unlimited'); older versions ignore it.
+if (!db.prepare('PRAGMA table_info(rooms)').all().some(item => item.name === 'claude_reception')) {
+  db.exec("ALTER TABLE rooms ADD COLUMN claude_reception TEXT NOT NULL DEFAULT '10h'");
+}
 
 function output(value) {
   if (typeof value === 'bigint') return Number(value);

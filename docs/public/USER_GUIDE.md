@@ -75,8 +75,22 @@ With its default settings, Claude Code stops a background command after two hour
 wait ends by itself just before that. While the room is quiet, Claude's session therefore wakes for
 one short turn about every two hours and starts a new wait. The join, reconnect
 and resume lines tell it to do this without asking you; a wait you stop yourself stays stopped. It keeps this up until its receiving period
-ends, ten hours after its last reply in the room; then the room asks you to reconnect it. These
-brief wakes consume Claude usage; the amount depends on conversation length and caching.
+ends; then the room asks you to reconnect it. These brief wakes consume Claude usage; the amount
+depends on conversation length and caching.
+
+The receiving period starts again each time Claude replies in the room, accepts a work session, or
+sends a work request or answer to the other agent, so a long work session doesn't cut it off while
+the agents are still talking. Receipts, progress and status updates don't count. Choose the length in
+Claude's member panel under **Receiving period**:
+
+- **10 hours** (default) or **24 hours** after its last reply;
+- **Until I stop it**: Claude keeps receiving until you change this setting, remove its seat or
+  archive the room. While the room is quiet, its session still wakes about every two hours, so this
+  keeps using Claude usage for as long as it is on.
+
+A change applies from now to a period that is still running. Once a period has ended, Claude needs
+the reconnect line; the next period uses the new choice. The choice belongs to the room, so a Claude
+seat you add to it later starts with it too.
 
 ### Resuming unanswered messages
 
@@ -163,7 +177,8 @@ may be (32,000 characters) can't be used this way.
   the session pauses until you add more.
 - **Time left** sits beside them. Its **+** adds an hour; the work panel offers 1, 2 or 5 more
   hours. One session can run for 24 hours at most in all, and time can't be added once it has
-  ended. More time adds no requests or wake-ups, and doesn't extend Claude's receiving period.
+  ended. More time adds no requests or wake-ups, and doesn't extend Claude's receiving period by
+  itself; Claude's work messages do.
 - **Stop** cancels what has not been delivered yet; answers already being written are stopped in
   the agents' own apps. Afterwards the work panel offers **Release work session** to free the room.
 

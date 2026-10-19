@@ -2,6 +2,32 @@
 
 中文说明在每个版本的英文部分之后。
 
+## 0.3.7
+
+- **Claude stays connected through long work sessions.** Claude's work requests
+  and answers to the other agent now restart its receiving period, as replies and
+  accepting a work session already did. Before, Claude could drop out about ten
+  hours into an Unlimited Kick off while the agents were still talking.
+  Receipts, progress and status updates still don't count.
+- **Choose Claude's receiving period.** In Claude's member panel: 10 hours
+  (default), 24 hours, or Until I stop it. A change applies from now to a period
+  that is still running, and the room's timeline records it. Until I stop it
+  keeps a quiet session waking about every two hours, so it keeps using Claude
+  usage while it is on.
+- No other new model calls. An ended period still needs the reconnect line.
+- Upgrade in **Settings → Updates**, then reload the window.
+
+**中文：** Claude 在长时间开工中不再掉线，并可以选择接收期限。
+
+- **工作消息也续期**：Claude 给另一个代理发工作请求或答复，接收期限会重新计算，和回复、
+  接下开工一样。以前无限开工约 10 小时后，两边还在交流时 Claude 可能掉线。回执、进度和
+  状态更新仍不算。
+- **选择接收期限**：在 Claude 的成员面板里选 10 小时（默认）、24 小时或“直到我停止”。
+  改动对还没到期的期限从现在起生效，群时间线会记一笔。“直到我停止”期间，群里没动静时
+  Claude 仍大约每 2 小时醒一次，会一直消耗 Claude 用量。
+- 不增加其他模型调用。期限已过仍要用重连口令接上。
+- 在 **设置 → 更新** 升级，然后刷新窗口。
+
 ## 0.3.6
 
 - **Codex Desktop update compatibility.** Recognize the renamed `codex-app-tools-*`

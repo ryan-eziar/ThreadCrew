@@ -277,6 +277,7 @@ export async function createV2Server({ broker, work = null, runtimeDir, projectD
         };
         if (routes[action]) { const [method, keys] = routes[action]; return response(res, await broker[method](roomId, await humanPost(keys, keys.filter(k => !['finishPolicy','format'].includes(k))))); }
         if (endpoint.length === 3 && endpoint[0] === 'members' && endpoint[2] === 'remove' && ROLES.includes(endpoint[1])) return response(res, await broker.removeMember(roomId, endpoint[1], await humanPost(['operationId', 'expectedGate', 'expectedBindingId', 'expectedBindingVersion', 'acknowledgePossibleRunning'])));
+        if (endpoint.length === 3 && endpoint[0] === 'members' && endpoint[1] === 'claude' && endpoint[2] === 'reception') return response(res, await broker.setClaudeReception(roomId, await humanPost(['operationId', 'mode'])));
         if (endpoint.length === 3 && endpoint[0] === 'deliveries' && ['abandon', 'resend'].includes(endpoint[2])) {
           const abandon = endpoint[2] === 'abandon', keys = abandon ? ['operationId', 'expectedDeliveryVersion', 'expectedClaimId'] : ['operationId', 'expectedGate', 'expectedDeliveryVersion', 'acknowledgePossibleDuplicate'];
           return response(res, await broker[abandon ? 'abandonDelivery' : 'resendDelivery'](roomId, identifier(endpoint[1]), await humanPost(keys, keys.filter(k => k !== 'acknowledgePossibleDuplicate'))));

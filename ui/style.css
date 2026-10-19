@@ -271,6 +271,11 @@ kbd {
 }
 .seg-opt:hover { color: var(--text-strong); }
 .seg-opt[aria-checked="true"] { background: var(--base); color: var(--accent-text); box-shadow: var(--out-1); }
+/* Claude's receiving period in its panel: the switch, then what the choice means. */
+.reception { display: grid; gap: 6px; }
+.reception .seg { flex: none; }
+.reception .seg-opt { height: 28px; white-space: nowrap; }
+.reception-hint { margin: 0; font-size: 12px; line-height: 1.5; }
 
 /* ---- Top bar inside the main slab ------------------------------------------------------------ */
 .topbar { display: flex; align-items: center; gap: 14px; min-height: 76px; padding: 14px 26px 10px; }
